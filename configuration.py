@@ -1,6 +1,8 @@
 class Config(object):
     def __init__(self):
 
+        self.experiment = 'xac_from_zero'
+
         # Learning Rates
         self.lr_backbone = 1e-5
         self.lr = 1e-4
@@ -19,9 +21,9 @@ class Config(object):
         # Basic
         self.device = 'cuda'
         self.seed = 42
-        self.batch_size = 32
+        self.batch_size = 16
         self.num_workers = 8
-        self.checkpoint = './checkpoint.pth'
+        self.checkpoint = f'./checkpoint_{self.experiment}.pth'
         self.clip_max_norm = 0.1
 
         # Transformer
@@ -31,6 +33,7 @@ class Config(object):
         self.layer_norm_eps = 1e-12
         self.dropout = 0.1
         self.vocab_size = 30522
+        self.new_vocab_size = 119547 + 222
 
         self.enc_layers = 6
         self.dec_layers = 6
@@ -39,5 +42,5 @@ class Config(object):
         self.pre_norm = True
 
         # Dataset
-        self.dir = '../coco'
+        self.dir = '/data2fast/users/esanchez'
         self.limit = -1

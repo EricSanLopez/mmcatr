@@ -1,4 +1,5 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
+import wandb
 import torch
 
 import math
@@ -17,7 +18,7 @@ def train_one_epoch(model, criterion, data_loader,
     total = len(data_loader)
 
     with tqdm.tqdm(total=total) as pbar:
-        for images, masks, caps, cap_masks in data_loader:
+        for idx, (images, masks, caps, cap_masks) in enumerate(data_loader):
             samples = utils.NestedTensor(images, masks).to(device)
             caps = caps.to(device)
             cap_masks = cap_masks.to(device)
@@ -39,7 +40,19 @@ def train_one_epoch(model, criterion, data_loader,
 
             pbar.update(1)
 
+            if (idx + 1) % 50 == 0:
+                train_log(loss.item(), 'captioning', caps.shape[0] * idx, epoch)
+
     return epoch_loss / total
+
+
+def train_log(loss, task, example_ct, epoch):
+    """
+    Logs on wandb and console.
+    """
+    print(f"{task} loss after {str(example_ct).zfill(5)} examples: {loss:.3f}")
+    wandb.log({'epoch': epoch, f'loss_{task}': loss})
+
 
 @torch.no_grad()
 def evaluate(model, criterion, data_loader, device):

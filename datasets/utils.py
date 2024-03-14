@@ -7,10 +7,18 @@ import os
 
 MAX_DIM = 299
 
+
+def tkn(lang):
+    if type(lang) != str:
+        return [str('<' + string + '>') for string in lang]
+    return str('<' + lang + '>')
+
+
 def read_json(file_name):
     with open(file_name) as handle:
         out = json.load(handle)
     return out
+
 
 def nested_tensor_from_tensor_list(tensor_list: List[Tensor]):
     # TODO make this more general

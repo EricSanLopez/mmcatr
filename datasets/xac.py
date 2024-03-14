@@ -4,6 +4,7 @@ import torchvision as tv
 
 from PIL import Image
 import numpy as np
+import pandas as pd
 import random
 import os
 
@@ -54,14 +55,14 @@ val_transform = tv.transforms.Compose([
 ])
 
 
-class CocoCaption(Dataset):
+class XACCaption(Dataset):
     def __init__(self, root, ann, max_length, limit, transform=train_transform, mode='training'):
         super().__init__()
 
         self.root = root
         self.transform = transform
-        self.annot = [(self._process(val['image_id']), val['caption'])
-                      for val in ann['annotations']]
+        data = pd.read_csv(ann, sep='\t')
+        self.annot = [(img, caption) for img, caption in zip(data['image'], data['caption'])]
         if mode == 'validation':
             self.annot = self.annot
         if mode == 'training':
@@ -73,11 +74,8 @@ class CocoCaption(Dataset):
         special_tokens = ['<loc>', '<per>', '<org>', '<misc>']
         special_tokens_dict = {'additional_special_tokens': special_tokens + tkn(langs)}
         self.tokenizer.add_special_tokens(special_tokens_dict)
-        self.max_length = max_length + 1
 
-    def _process(self, image_id):
-        val = str(image_id).zfill(12)
-        return val + '.jpg'
+        self.max_length = max_length + 1
 
     def __len__(self):
         return len(self.annot)
@@ -91,7 +89,8 @@ class CocoCaption(Dataset):
         image = nested_tensor_from_tensor_list(image.unsqueeze(0))
 
         caption_encoded = self.tokenizer.encode_plus(
-            caption, max_length=self.max_length, pad_to_max_length=True, return_attention_mask=True, return_token_type_ids=False, truncation=True)
+            caption, max_length=self.max_length, pad_to_max_length=True, return_attention_mask=True,
+            return_token_type_ids=False, truncation=True)
 
         caption = np.array(caption_encoded['input_ids'])
         cap_mask = (
@@ -101,19 +100,19 @@ class CocoCaption(Dataset):
 
 
 def build_dataset(config, mode='training'):
-    root = os.path.join(config.dir, 'coco2017')
+    root = os.path.join(config.dir, 'xac')
     if mode == 'training':
         train_dir = os.path.join(root, 'train')
-        train_file = os.path.join(root, 'annotations', 'captions_train2017.json')
-        data = CocoCaption(train_dir, read_json(
-            train_file), max_length=config.max_position_embeddings, limit=config.limit, transform=train_transform, mode='training')
+        train_file = os.path.join(root, 'train.tsv')
+        data = XACCaption(train_dir, train_file, max_length=config.max_position_embeddings, limit=config.limit,
+                          transform=train_transform, mode='training')
         return data
 
     elif mode == 'validation':
         val_dir = os.path.join(root, 'test')
-        val_file = os.path.join(root, 'annotations', 'captions_val2017.json')
-        data = CocoCaption(val_dir, read_json(
-            val_file), max_length=config.max_position_embeddings, limit=config.limit, transform=val_transform, mode='validation')
+        val_file = os.path.join(root, 'captions_test_raw.tsv')
+        data = XACCaption(val_dir, val_file, max_length=config.max_position_embeddings, limit=config.limit,
+                          transform=val_transform, mode='validation')
         return data
 
     else:
