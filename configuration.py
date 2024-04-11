@@ -1,14 +1,14 @@
 class Config(object):
     def __init__(self):
 
-        self.experiment = 'xac_from_zero'
+        self.experiment = 'experiment'
 
         # Learning Rates
         self.lr_backbone = 1e-5
         self.lr = 1e-4
 
         # Epochs
-        self.epochs = 30
+        self.epochs = 10
         self.lr_drop = 20
         self.start_epoch = 0
         self.weight_decay = 1e-4

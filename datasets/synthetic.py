@@ -30,7 +30,7 @@ def under_max(image):
 
 
 class RandomRotation:
-    def __init__(self, angles=[0, 90, 180, 270]):
+    def __init__(self, angles=(0, 90, 180, 270)):
         self.angles = angles
 
     def __call__(self, x):
@@ -55,14 +55,13 @@ val_transform = tv.transforms.Compose([
 ])
 
 
-class HistSDCaption(Dataset):
-    def __init__(self, root, ann, max_length, limit, transform=train_transform, mode='training'):
+class SyntheticCaption(Dataset):
+    def __init__(self, root, data, max_length, limit, transform=train_transform, mode='training'):
         super().__init__()
 
         self.root = root
         self.transform = transform
-        data = pd.read_csv(ann, sep='\t')
-        self.annot = [(self._process(img), caption) for img, caption in zip(data['image'], data['caption'])]
+        self.annot = [(self._process(row[0]), row[1]) for row in data.itertuples(index=False)]
         if mode == 'validation':
             self.annot = self.annot
         if mode == 'training':
@@ -77,6 +76,8 @@ class HistSDCaption(Dataset):
         self.max_length = max_length + 1
 
     def _process(self, image_id):
+        if str(image_id)[-1] == 'g':
+            return image_id
         dir_id = int(image_id) // 4096
         return os.path.join(str(dir_id), str(image_id) + '.jpg')
 
@@ -99,23 +100,31 @@ class HistSDCaption(Dataset):
         cap_mask = (
             1 - np.array(caption_encoded['attention_mask'])).astype(bool)
 
-        return image.tensors.squeeze(0), image.mask.squeeze(0), caption, cap_mask
+        return 'captioning', image.tensors.squeeze(0), image.mask.squeeze(0), caption, cap_mask
 
 
-def build_dataset(config, mode='training'):
-    root = os.path.join(config.dir, 'historic_sd')
+def build_dataset(config, synthetic_images=True, synthetic_captions=False, mode='training'):
+    root = config.dir
+    image = 'synthetic_image' if synthetic_images else 'image'
+
     if mode == 'training':
-        train_dir = os.path.join(root, 'images')
-        train_file = os.path.join(root, 'train.tsv')
-        data = HistSDCaption(train_dir, train_file, max_length=config.max_position_embeddings, limit=config.limit,
-                             transform=train_transform, mode='training')
+        train_dir = os.path.join(root, 'historic_sd/images' if synthetic_images else 'coco2017/train')
+        train_file = os.path.join(root, 'coco2017', 'captions_train_cat.tsv' if synthetic_captions else
+                                  'captions_train.tsv')
+        df = pd.read_csv(train_file, sep='\t')[[image, 'caption']]
+        df.columns = [['image', 'caption']]
+        data = SyntheticCaption(train_dir, df, max_length=config.max_position_embeddings, limit=config.limit,
+                                transform=train_transform, mode='training')
         return data
 
     elif mode == 'validation':
-        val_dir = os.path.join(root, 'images')
-        val_file = os.path.join(root, 'test.tsv')
-        data = HistSDCaption(val_dir, val_file, max_length=config.max_position_embeddings, limit=config.limit,
-                             transform=val_transform, mode='validation')
+        val_dir = os.path.join(root, 'historic_sd/images' if synthetic_images else 'coco2017/test')
+        val_file = os.path.join(root, 'coco2017', 'captions_test_cat.tsv' if synthetic_captions else
+                                'captions_test.tsv')
+        df = pd.read_csv(val_file, sep='\t')[[image, 'caption']]
+        df.columns = [['image', 'caption']]
+        data = SyntheticCaption(val_dir, df, max_length=config.max_position_embeddings, limit=config.limit,
+                                transform=val_transform, mode='validation')
         return data
 
     else:

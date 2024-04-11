@@ -1,6 +1,7 @@
 from torch.utils.data import Dataset
 import torchvision.transforms.functional as TF
 import torchvision as tv
+from torch import Tensor
 
 from PIL import Image
 import numpy as np
@@ -80,6 +81,16 @@ class XACCaption(Dataset):
     def __len__(self):
         return len(self.annot)
 
+    def get_weights(self, size):
+        weights = [0]*size
+        for ann in self.annot:
+            caption = ann[1]
+            tokens = self.tokenizer.encode(caption)
+            for i in tokens:
+                weights[i] += 1
+        weights = Tensor(sum(weights) / (np.array(weights) + 1))
+        return weights
+
     def __getitem__(self, idx):
         image_id, caption = self.annot[idx]
         image = Image.open(os.path.join(self.root, image_id))
@@ -96,7 +107,7 @@ class XACCaption(Dataset):
         cap_mask = (
             1 - np.array(caption_encoded['attention_mask'])).astype(bool)
 
-        return image.tensors.squeeze(0), image.mask.squeeze(0), caption, cap_mask
+        return 'captioning', image.tensors.squeeze(0), image.mask.squeeze(0), caption, cap_mask
 
 
 def build_dataset(config, mode='training'):

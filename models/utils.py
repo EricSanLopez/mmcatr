@@ -1,9 +1,13 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 from typing import List, Optional
+from collections.abc import Callable
 
 import torch
 import torch.distributed as dist
+import torch.nn as nn
 from torch import Tensor
+
+from pytorch_metric_learning import miners, losses
 
 
 def _max_by_axis(the_list):
@@ -74,3 +78,159 @@ def get_rank():
 
 def is_main_process():
     return get_rank() == 0
+
+
+def sigmoid(x, k=1.0):
+    exponent = -x/k
+    exponent = torch.clamp(exponent, min=-50, max=50)
+    y = 1./(1. + torch.exp(exponent))
+    return y
+
+
+class CosineSimilarityMatrix(nn.Module):
+    def __init__(self, dim: int = 1, eps: float = 1e-8) -> None:
+        super(CosineSimilarityMatrix, self).__init__()
+        self.dim = dim
+        self.eps = eps
+
+    def forward(self, x1: Tensor, x2: Tensor) -> Tensor:
+        return cosine_similarity_matrix(x1, x2, self.dim, self.eps)
+
+def cosine_similarity_matrix(x1: Tensor, x2: Tensor, dim: int = 1, eps: float = 1e-8) -> Tensor:
+    '''
+    When using cosine similarity the constant value must be positive
+    '''
+    #Cosine sim:
+    xn1, xn2 = torch.norm(x1, dim=dim), torch.norm(x2, dim=dim)
+    x1 = x1 / torch.clamp(xn1, min=eps).unsqueeze(dim)
+    x2 = x2 / torch.clamp(xn2, min=eps).unsqueeze(dim)
+    x1, x2 = x1.unsqueeze(0), x2.unsqueeze(1)
+
+    sim = torch.tensordot(x1, x2, dims=([2], [2])).squeeze()
+
+    sim = (sim + 1)/2 #range: [-1, 1] -> [0, 2] -> [0, 1]
+
+    return sim
+
+
+def ndcg(output, target, reducefn='mean'):
+    # Similarity matrix
+    sm = cosine_similarity_matrix(output, output)
+    mask_diagonal = ~ torch.eye(sm.shape[0]).bool()
+    ranking = sm[mask_diagonal].view(sm.shape[0], sm.shape[0]-1)
+
+    gt = torch.abs(target.unsqueeze(0) - target.unsqueeze(1))
+    gt = gt[mask_diagonal].view(sm.shape[0], sm.shape[0]-1).float()
+
+#    relevance = 1. / (gt + 1)
+#    relevance = 10-gt
+    relevance = 5-gt
+    relevance = relevance.clamp(max=5, min=0)
+    relevance = relevance.exp() - 1
+
+    ndcg_sk = []
+    for y_gt, y_scores in zip(relevance, ranking):
+        y_scores_np = np.asarray([y_scores.cpu().numpy()])
+        y_gt_np = np.asarray([y_gt.cpu().numpy()])
+        ndcg_sk.append(ndcg_score(y_gt_np, y_scores_np))
+
+    if reducefn == 'mean':
+        return np.mean(ndcg_sk)
+    elif reducefn == 'sum':
+        return np.sum(ndcg_sk)
+    elif reducefn == 'none':
+        return ndcg_sk
+
+
+class DGCLoss(nn.Module):
+    def __init__(self, k: float = 1e-3, penalize=False, normalize=True, indicator_function: Callable = sigmoid):
+        super(DGCLoss, self).__init__()
+        self.k = k
+        self.penalize = penalize
+        self.normalize = normalize
+        self.indicator_function = indicator_function
+
+    def forward(self, ranking: Tensor, gt: Tensor, mask_diagonal: Tensor = None) -> Tensor:
+        return dgc_loss(ranking, gt, mask_diagonal=mask_diagonal, k=self.k, penalize=self.penalize,
+                        normalize=self.normalize, indicator_function=self.indicator_function)
+
+
+def dgc_loss(input: Tensor, target: Tensor, mask_diagonal: Tensor = None, k: float = 1e-2, penalize: bool = False,
+             normalize: bool = True, indicator_function: Callable = sigmoid,
+             similarity: Callable = CosineSimilarityMatrix()) -> Tensor:
+    sm = similarity(input, input)
+    mask_diagonal = ~ torch.eye(sm.shape[0]).bool()
+    ranking = sm[mask_diagonal].view(sm.shape[0], sm.shape[0] - 1)
+
+    # Ground-truth Ranking function
+    gt = torch.abs(target.unsqueeze(0) - target.unsqueeze(1)).float()
+    # gt = gt[mask_diagonal].view(sm.shape[0], sm.shape[0]-1)
+
+    if mask_diagonal is not None:
+        # ranking = ranking[mask_diagonal].view(ranking.shape[0], ranking.shape[0]-1)
+        gt = gt[mask_diagonal].view(gt.shape[0], gt.shape[0] - 1)
+
+    # Prepare indicator function
+    dij = ranking.unsqueeze(1) - ranking.unsqueeze(-1)
+    mask_diagonal = ~ torch.eye(dij.shape[-1]).bool()
+    dij = dij[:, mask_diagonal].view(dij.shape[0], dij.shape[1], -1)
+
+    # Indicator function
+    # Assuming a perfect step function
+    # indicator = (dij > 0).float()
+    # indicator = indicator.sum(-1) + 1
+
+    # Smooth indicator function
+    indicator = indicator_function(dij, k=k)
+    indicator = indicator.sum(-1) + 1
+
+    # Relevance score
+    #    relevance = 10. / (gt + 1)
+    relevance = 10 - gt
+    relevance = relevance.clamp(0)
+    relevance = relevance.exp2() - 1  # Exponentially penalize
+    # Ground-truth Ranking function
+    # print(relevance[0])
+    if penalize:
+        relevance = relevance.exp2() - 1
+    # print(relevance.shape, indicator.shape)
+
+    dcg = torch.sum(relevance / torch.log2(indicator + 1), dim=1)
+
+    if not normalize:
+        return -dcg.mean()
+
+    relevance, _ = relevance.sort(descending=True)
+    indicator = torch.arange(relevance.shape[-1], dtype=torch.float32, device=relevance.device)
+    idcg = torch.sum(relevance / torch.log2(indicator + 2), dim=-1)
+
+    dcg = dcg[idcg != 0]
+    idcg = idcg[idcg != 0]
+
+    ndcg = dcg / idcg
+
+    if ndcg.numel() == 0:
+        return torch.tensor(1, device=ranking.device)
+    # Ground-truth Ranking function
+
+    return 1 - ndcg.mean()
+
+
+class MetricLearning:
+    def __init__(self):
+        self.miner = miners.BatchEasyHardMiner()
+        self.loss_fn = losses.TripletMarginLoss(margin=0.2)
+
+    def __call__(self, outputs, target):
+        miner_output = self.miner(outputs, target)
+        return self.loss_fn(outputs, target, miner_output)
+
+
+def get_criterion(criterion):
+    match criterion.lower():
+        case "ndcg":
+            return DGCLoss()
+        case "triplet":
+            return MetricLearning()
+        case other:
+            raise NotImplementedError(f'Criterion {criterion} not in ["NDCG", "Triplet"]')

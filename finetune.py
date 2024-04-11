@@ -10,7 +10,7 @@ import time
 import sys
 
 from models import utils, caption
-from datasets import coco, hist_sd, xac
+from datasets import coco, synthetic, xac
 from configuration import Config
 from engine import train_one_epoch, evaluate
 
@@ -30,36 +30,14 @@ def finetune(config, args):
         torch.manual_seed(seed)
         np.random.seed(seed)
 
+        checkpoint_path = f'checkpoints/{args.checkpoint}.pth'
         model, criterion = caption.build_model(config)
-        if args.checkpoint == 'coco':
-            checkpoint_path = 'checkpoints/checkpoint_coco_from_zero.pth'
-            model, _ = caption.build_model(config)
-            model.mlp.layers[2] = nn.Linear(512, config.new_vocab_size, bias=True)
-            model.transformer.embeddings.word_embeddings = nn.Embedding(
-                config.new_vocab_size, config.hidden_dim, padding_idx=config.pad_token_id)
+        try:
             checkpoint = torch.load(checkpoint_path, map_location='cpu')
-            model.load_state_dict(checkpoint['model'])
-            model.to(device)
-        elif args.checkpoint == 'hist_sd':
-            checkpoint_path = 'checkpoints/checkpoint_hist_sd_from_zero.pth'
-            model, _ = caption.build_model(config)
-            model.mlp.layers[2] = nn.Linear(512, config.new_vocab_size, bias=True)
-            model.transformer.embeddings.word_embeddings = nn.Embedding(
-                config.new_vocab_size, config.hidden_dim, padding_idx=config.pad_token_id)
-            checkpoint = torch.load(checkpoint_path, map_location='cpu')
-            model.load_state_dict(checkpoint['model'])
-            model.to(device)
-        elif args.checkpoint == 'xac':
-            checkpoint_path = 'checkpoints/checkpoint_xac_from_zero.pth'
-            model, _ = caption.build_model(config)
-            model.mlp.layers[2] = nn.Linear(512, config.new_vocab_size, bias=True)
-            model.transformer.embeddings.word_embeddings = nn.Embedding(
-                config.new_vocab_size, config.hidden_dim, padding_idx=config.pad_token_id)
-            checkpoint = torch.load(checkpoint_path, map_location='cpu')
-            model.load_state_dict(checkpoint['model'])
-            model.to(device)
-        else:
+        except:
             raise NotImplementedError('Incorrect checkpoint from coco, hist_sd or xac')
+        model.load_state_dict(checkpoint['model'])
+        model.to(device)
 
         config.lr = 1e-5
         config.epochs = args.epochs
@@ -85,13 +63,20 @@ def finetune(config, args):
             dataset_train = coco.build_dataset(config, mode='training')
             dataset_val = coco.build_dataset(config, mode='validation')
         elif args.dataset == 'hist_sd':
-            dataset_train = hist_sd.build_dataset(config, mode='training')
-            dataset_val = hist_sd.build_dataset(config, mode='validation')
+            dataset_train = synthetic.build_dataset(
+                config, synthetic_images=True, synthetic_captions=False, mode='training')
+            dataset_val = synthetic.build_dataset(
+                config, synthetic_images=True, synthetic_captions=False, mode='validation')
         elif args.dataset == 'xac':
             dataset_train = xac.build_dataset(config, mode='training')
             dataset_val = xac.build_dataset(config, mode='validation')
+
         print(f"Train: {len(dataset_train)}")
         print(f"Valid: {len(dataset_val)}")
+
+        if args.weighted_criterion:
+            weights = dataset_train.get_weights(config.new_vocab_size).to(config.device)
+            criterion = nn.CrossEntropyLoss(weight=weights, ignore_index=0)
 
         sampler_train = torch.utils.data.RandomSampler(dataset_train)
         sampler_val = torch.utils.data.SequentialSampler(dataset_val)
@@ -102,26 +87,24 @@ def finetune(config, args):
 
         data_loader_train = DataLoader(
             dataset_train, batch_sampler=batch_sampler_train, num_workers=config.num_workers)
-        data_loader_val = DataLoader(dataset_val, config.batch_size,
-                                     sampler=sampler_val, drop_last=False, num_workers=config.num_workers)
-
-        """
-        if os.path.exists(config.checkpoint):
-            print("Loading Checkpoint...")
-            checkpoint = torch.load(config.checkpoint, map_location='cpu')
-            model.load_state_dict(checkpoint['model'])
-            optimizer.load_state_dict(checkpoint['optimizer'])
-            lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
-            config.start_epoch = checkpoint['epoch'] + 1
-        """
+        data_loader_val = DataLoader(
+            dataset_val, config.batch_size, sampler=sampler_val, drop_last=False, num_workers=config.num_workers)
 
         print("Start Training..")
+        global_loss = dict()
+        global_validation_loss = dict()
         for epoch in range(config.start_epoch, config.epochs):
             print(f"Epoch: {epoch}")
             epoch_loss = train_one_epoch(
                 model, criterion, data_loader_train, optimizer, device, epoch, config.clip_max_norm)
             lr_scheduler.step()
-            print(f"Training Loss: {epoch_loss}")
+            for task in epoch_loss.keys():
+                print(f"Training Loss for {task}: {epoch_loss[task]}")
+                try:
+                    global_loss[task].append(epoch_loss[task])
+                except:
+                    global_loss[task] = [epoch_loss[task]]
+            wandb.log({f'epoch_loss_{task}': epoch_loss[task] for task in epoch_loss.keys()})
 
             torch.save({
                 'model': model.state_dict(),
@@ -131,9 +114,19 @@ def finetune(config, args):
             }, os.path.join('checkpoints', f'checkpoint_from_{args.checkpoint}_to_{args.dataset}.pth'))
 
             validation_loss = evaluate(model, criterion, data_loader_val, device)
-            print(f"Validation Loss: {validation_loss}")
+            for task in validation_loss.keys():
+                print(f"Validation Loss for {task}: {validation_loss[task]}")
+                try:
+                    global_validation_loss[task].append(validation_loss[task])
+                except:
+                    global_validation_loss[task] = [validation_loss[task]]
+            wandb.log({f'epoch_validation_loss_{task}': validation_loss[task] for task in validation_loss.keys()})
 
             print()
+
+        with open(f'checkpoints/epoch_loss_from_{args.checkpoint}_to_{args.dataset}.tsv', 'w') as f:
+            f.write('epoch\tloss\n')
+            f.write('\n'.join([f'{i + 1}\t{loss}' for i, loss in enumerate(global_loss)]))
 
 
 if __name__ == "__main__":
@@ -142,6 +135,7 @@ if __name__ == "__main__":
     parser.add_argument('--dataset', default='coco', type=str)
     parser.add_argument('--epochs', default=10, type=int)
     parser.add_argument('--checkpoint', default='coco', type=str)
+    parser.add_argument('--weighted_criterion', default=False, type=bool)
     args = parser.parse_args()
 
     config = Config()

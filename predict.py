@@ -35,18 +35,18 @@ elif version == 'v3':
 else:
     print("Checking for checkpoint.")
     if checkpoint_path is None:
-      raise NotImplementedError('No model to chose from!')
+        raise NotImplementedError('No model to chose from!')
     else:
-      if not os.path.exists(checkpoint_path):
-        raise NotImplementedError('Give valid checkpoint path')
-      print("Found checkpoint! Loading!")
-      model,_ = caption.build_model(config)
-      model.mlp.layers[2] = nn.Linear(512, config.new_vocab_size, bias=True)
-      model.transformer.embeddings.word_embeddings = nn.Embedding(
-          config.new_vocab_size, config.hidden_dim, padding_idx=config.pad_token_id)
-      print("Loading Checkpoint...")
-      checkpoint = torch.load(checkpoint_path, map_location='cpu')
-      model.load_state_dict(checkpoint['model'])
+        if not os.path.exists(checkpoint_path):
+            raise NotImplementedError('Give valid checkpoint path')
+        print("Found checkpoint! Loading!")
+        model, _ = caption.build_model(config)
+        model.mlp.layers[2] = nn.Linear(512, config.new_vocab_size, bias=True)
+        model.transformer.embeddings.word_embeddings = nn.Embedding(
+            config.new_vocab_size, config.hidden_dim, padding_idx=config.pad_token_id)
+        print("Loading Checkpoint...")
+        checkpoint = torch.load(checkpoint_path, map_location='cpu')
+        model.load_state_dict(checkpoint['model'])
 langs = read_json(os.path.join("/data2fast/users/esanchez", "laion", 'language-codes.json'))
 tokenizer = BertTokenizer.from_pretrained('bert-base-multilingual-cased')
 special_tokens = ['<loc>', '<per>', '<org>', '<misc>']

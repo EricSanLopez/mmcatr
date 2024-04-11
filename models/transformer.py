@@ -7,6 +7,79 @@ import torch.nn.functional as F
 from torch import nn, Tensor
 
 
+class Encoder(nn.Module):
+
+    def __init__(self, config, d_model=512, nhead=8, num_encoder_layers=6, dim_feedforward=2048, dropout=0.1,
+                 activation="relu", normalize_before=False):
+        super().__init__()
+
+        encoder_layer = TransformerEncoderLayer(d_model, nhead, dim_feedforward,
+                                                dropout, activation, normalize_before)
+        encoder_norm = nn.LayerNorm(d_model) if normalize_before else None
+        self.encoder = TransformerEncoder(
+            encoder_layer, num_encoder_layers, encoder_norm)
+
+        self._reset_parameters()
+
+        self.d_model = d_model
+        self.nhead = nhead
+
+    def _reset_parameters(self):
+        for p in self.parameters():
+            if p.dim() > 1:
+                nn.init.xavier_uniform_(p)
+
+    def forward(self, src, mask, pos_embed):
+        # flatten NxCxHxW to HWxNxC
+        src = src.flatten(2).permute(2, 0, 1)
+        pos_embed = pos_embed.flatten(2).permute(2, 0, 1)
+        mask = mask.flatten(1)
+
+        memory = self.encoder(src, src_key_padding_mask=mask, pos=pos_embed)
+        return memory
+
+
+class Decoder(nn.Module):
+
+    def __init__(self, config, d_model=512, nhead=8, num_decoder_layers=6,
+                 dim_feedforward=2048, dropout=0.1, activation="relu",
+                 normalize_before=False, return_intermediate_dec=False):
+        super().__init__()
+
+        self.embeddings = DecoderEmbeddings(config)
+        decoder_layer = TransformerDecoderLayer(d_model, nhead, dim_feedforward,
+                                                dropout, activation, normalize_before)
+        decoder_norm = nn.LayerNorm(d_model)
+        self.decoder = TransformerDecoder(decoder_layer, num_decoder_layers, decoder_norm,
+                                          return_intermediate=return_intermediate_dec)
+
+        self._reset_parameters()
+
+        self.d_model = d_model
+        self.nhead = nhead
+
+    def _reset_parameters(self):
+        for p in self.parameters():
+            if p.dim() > 1:
+                nn.init.xavier_uniform_(p)
+
+    def forward(self, memory, mask, pos_embed, tgt, tgt_mask):
+        # flatten NxCxHxW to HWxNxC
+        bs, c, h, w = pos_embed.shape
+        pos_embed = pos_embed.flatten(2).permute(2, 0, 1)
+        mask = mask.flatten(1)
+
+        tgt = self.embeddings(tgt).permute(1, 0, 2)
+        query_embed = self.embeddings.position_embeddings.weight.unsqueeze(1)
+        query_embed = query_embed.repeat(1, bs, 1)
+
+        hs = self.decoder(tgt, memory, memory_key_padding_mask=mask, tgt_key_padding_mask=tgt_mask,
+                          pos=pos_embed, query_pos=query_embed,
+                          tgt_mask=generate_square_subsequent_mask(len(tgt)).to(tgt.device))
+
+        return hs
+
+
 class Transformer(nn.Module):
 
     def __init__(self, config, d_model=512, nhead=8, num_encoder_layers=6,
@@ -325,15 +398,37 @@ def generate_square_subsequent_mask(sz):
     return mask
 
 
-def build_transformer(config):
-    return Transformer(
+def build_transformer(config, return_transformer=False):
+    if return_transformer:
+        return Transformer(
+            config,
+            d_model=config.hidden_dim,
+            dropout=config.dropout,
+            nhead=config.nheads,
+            dim_feedforward=config.dim_feedforward,
+            num_encoder_layers=config.enc_layers,
+            num_decoder_layers=config.dec_layers,
+            normalize_before=config.pre_norm,
+            return_intermediate_dec=False,
+        )
+
+    encoder = Encoder(
         config,
         d_model=config.hidden_dim,
-        dropout=config.dropout,
         nhead=config.nheads,
-        dim_feedforward=config.dim_feedforward,
         num_encoder_layers=config.enc_layers,
+        dim_feedforward=config.dim_feedforward,
+        dropout=config.dropout,
+        normalize_before=config.pre_norm)
+
+    decoder = Decoder(
+        config,
+        d_model=config.hidden_dim,
+        nhead=config.nheads,
         num_decoder_layers=config.dec_layers,
+        dim_feedforward=config.dim_feedforward,
+        dropout=config.dropout,
         normalize_before=config.pre_norm,
-        return_intermediate_dec=False,
-    )
+        return_intermediate_dec=False)
+
+    return encoder, decoder
