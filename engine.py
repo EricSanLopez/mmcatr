@@ -62,7 +62,7 @@ def train_one_epoch_multitask(model, criterion, criterion_datation, data_loader,
 
             match task:
                 case 'captioning':
-                    loss = train_captioning(model, data, criterion, device)
+                    loss = train_captioning(model, data, criterion, device, True)
 
                 case 'datation':
                     loss = train_datation(model, data, criterion_datation, device)
@@ -93,14 +93,17 @@ def train_one_epoch_multitask(model, criterion, criterion_datation, data_loader,
     return {k: v / idx[k] for k, v in epoch_loss.items() if idx[k] > 0}
 
 
-def train_captioning(model, data, criterion, device="cuda"):
+def train_captioning(model, data, criterion, device="cuda", multimodal=False):
     tasks, images, masks, caps, cap_masks = data
 
     samples = utils.NestedTensor(images, masks).to(device)
     caps = caps.to(device)
     cap_masks = cap_masks.to(device)
 
-    outputs = model(samples, caps[:, :-1], cap_masks[:, :-1])  # No està generalitzat pel cas de només captioning
+    if multimodal:
+        outputs = model(tasks[0], samples, caps[:, :-1], cap_masks[:, :-1])
+    else:
+        outputs = model(samples, caps[:, :-1], cap_masks[:, :-1])
     loss = criterion(outputs.permute(0, 2, 1), caps[:, 1:])
     return loss
 
@@ -126,7 +129,31 @@ def train_log(loss, task, example_ct, epoch):
 
 
 @torch.no_grad()
-def evaluate(model, criterion, criterion_datation, data_loader, device):
+def evaluate(model, criterion, data_loader, device):
+    model.eval()
+    criterion.eval()
+
+    validation_loss = 0.0
+    total = len(data_loader)
+
+    with tqdm.tqdm(total=total) as pbar:
+        for tasks, images, masks, caps, cap_masks in data_loader:
+            samples = utils.NestedTensor(images, masks).to(device)
+            caps = caps.to(device)
+            cap_masks = cap_masks.to(device)
+
+            outputs = model(samples, caps[:, :-1], cap_masks[:, :-1])
+            loss = criterion(outputs.permute(0, 2, 1), caps[:, 1:])
+
+            validation_loss += loss.item()
+
+            pbar.update(1)
+
+    return validation_loss / total
+
+
+@torch.no_grad()
+def evaluate_multitask(model, criterion, criterion_datation, data_loader, device):
     model.eval()
     criterion.eval()
 
@@ -140,7 +167,7 @@ def evaluate(model, criterion, criterion_datation, data_loader, device):
 
             match task:
                 case 'captioning':
-                    loss = train_captioning(model, data, criterion, device)
+                    loss = train_captioning(model, data, criterion, device, True)
 
                 case 'datation':
                     loss = train_datation(model, data, criterion_datation, device)

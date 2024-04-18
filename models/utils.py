@@ -7,6 +7,9 @@ import torch.distributed as dist
 import torch.nn as nn
 from torch import Tensor
 
+import numpy as np
+from sklearn.metrics import ndcg_score, average_precision_score
+
 from pytorch_metric_learning import miners, losses
 
 
@@ -140,6 +143,24 @@ def ndcg(output, target, reducefn='mean'):
         return np.sum(ndcg_sk)
     elif reducefn == 'none':
         return ndcg_sk
+
+
+def year_dif(output, target, reducefn='mean'):
+    # Similarity matrix
+    sm = cosine_similarity_matrix(output, output)
+    mask_diagonal = ~ torch.eye(sm.shape[0]).bool()
+    ranking = sm[mask_diagonal].view(sm.shape[0], sm.shape[0] - 1)
+
+    preds_idx = torch.argmax(ranking, dim=1).type(torch.uint8).tolist()
+    preds = target[preds_idx]
+    dif = torch.abs(target - preds).float().detach().cpu().numpy()
+
+    if reducefn == 'mean':
+        return np.mean(dif)
+    elif reducefn == 'sum':
+        return np.sum(dif)
+    elif reducefn == 'none':
+        return dif
 
 
 class DGCLoss(nn.Module):

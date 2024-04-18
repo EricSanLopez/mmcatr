@@ -34,8 +34,11 @@ def validate(config, args):
     torch.manual_seed(seed)
     np.random.seed(seed)
 
-    checkpoints = [f'experiment_{si}_{sc}' for si, sc in
-                   zip([True, True, False, False], [True, False, True, False])]
+    if args.checkpoint is None:
+        checkpoints = [f'experiment_{si}_{sc}_to_xac_ner_{args.ner}' for si, sc in
+                       zip([True, True, False, False], [True, False, True, False])]
+    else:
+        checkpoints = [args.checkpoint]
 
     if args.loss:
         handler = open('validation.txt', 'w')
@@ -47,22 +50,21 @@ def validate(config, args):
         dataset_val = synthetic.build_dataset(
             config, synthetic_images=True, synthetic_captions=False, mode='validation')
     elif args.dataset == 'xac':
-        dataset_val = xac.build_dataset(config, mode='validation')
+        dataset_val = xac.build_dataset(config, ner=args.ner, mode='validation')
     else:
         raise NotImplementedError('Incorrect dataset from coco, hist_sd or xac')
 
     langs = read_json(os.path.join("/data2fast/users/esanchez", "laion", 'language-codes.json'))
     tokenizer = BertTokenizer.from_pretrained('bert-base-multilingual-cased')
-    special_tokens = ['<loc>', '<per>', '<org>', '<misc>']
-    special_tokens_dict = {'additional_special_tokens': special_tokens + tkn(langs)}
+    additional_tokens = ['<loc>', '<per>', '<org>', '<misc>']
+    additional_tokens_dict = {'additional_tokens': additional_tokens}
+    special_tokens_dict = {'additional_special_tokens': tkn(langs)}
+    tokenizer.add_tokens(additional_tokens_dict)
     tokenizer.add_special_tokens(special_tokens_dict)
 
     for experiment in checkpoints:
         model, criterion = caption.build_model(config)
-        checkpoint_path = f'checkpoints/checkpoint_from_{experiment}_to_xac.pth'
-        model.mlp.layers[2] = nn.Linear(512, config.new_vocab_size, bias=True)
-        model.transformer.embeddings.word_embeddings = nn.Embedding(
-            config.new_vocab_size, config.hidden_dim, padding_idx=config.pad_token_id)
+        checkpoint_path = f'checkpoints/checkpoint_from_{experiment}.pth'
         try:
             checkpoint = torch.load(checkpoint_path, map_location='cpu')
         except:
@@ -171,6 +173,8 @@ if __name__ == "__main__":
     parser.add_argument('--dataset', default='xac', type=str)
     parser.add_argument('--batch_size', default=None, type=int)
     parser.add_argument('--loss', default=False, type=bool)
+    parser.add_argument('--ner', default=False, type=bool)
+    parser.add_argument('--checkpoint', default=None, type=str)
     args = parser.parse_args()
 
     config = Config()

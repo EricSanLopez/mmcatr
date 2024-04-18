@@ -72,8 +72,10 @@ class XACCaption(Dataset):
         # Initialize tokenizer (adding language and named entity tokens)
         langs = read_json(os.path.join("/data2fast/users/esanchez", "laion", 'language-codes.json'))
         self.tokenizer = BertTokenizer.from_pretrained('bert-base-multilingual-cased')
-        special_tokens = ['<loc>', '<per>', '<org>', '<misc>']
-        special_tokens_dict = {'additional_special_tokens': special_tokens + tkn(langs)}
+        additional_tokens = ['<loc>', '<per>', '<org>', '<misc>']
+        additional_tokens_dict = {'additional_tokens': additional_tokens}
+        special_tokens_dict = {'additional_special_tokens': tkn(langs)}
+        self.tokenizer.add_tokens(additional_tokens_dict)
         self.tokenizer.add_special_tokens(special_tokens_dict)
 
         self.max_length = max_length + 1
@@ -88,7 +90,9 @@ class XACCaption(Dataset):
             tokens = self.tokenizer.encode(caption)
             for i in tokens:
                 weights[i] += 1
-        weights = Tensor(sum(weights) / (np.array(weights) + 1))
+        weights = Tensor(1 - np.array(weights) / sum(weights))
+        weights[119547: 119547 + 4] = 1
+
         return weights
 
     def __getitem__(self, idx):
@@ -110,18 +114,18 @@ class XACCaption(Dataset):
         return 'captioning', image.tensors.squeeze(0), image.mask.squeeze(0), caption, cap_mask
 
 
-def build_dataset(config, mode='training'):
+def build_dataset(config, ner=False, mode='training'):
     root = os.path.join(config.dir, 'xac')
     if mode == 'training':
         train_dir = os.path.join(root, 'train')
-        train_file = os.path.join(root, 'train.tsv')
+        train_file = os.path.join(root, 'captions_train_raw.tsv' if not ner else 'captions_train.tsv')
         data = XACCaption(train_dir, train_file, max_length=config.max_position_embeddings, limit=config.limit,
                           transform=train_transform, mode='training')
         return data
 
     elif mode == 'validation':
         val_dir = os.path.join(root, 'test')
-        val_file = os.path.join(root, 'captions_test_raw.tsv')
+        val_file = os.path.join(root, 'captions_test_raw.tsv' if not ner else 'captions_test.tsv')
         data = XACCaption(val_dir, val_file, max_length=config.max_position_embeddings, limit=config.limit,
                           transform=val_transform, mode='validation')
         return data

@@ -49,8 +49,10 @@ else:
         model.load_state_dict(checkpoint['model'])
 langs = read_json(os.path.join("/data2fast/users/esanchez", "laion", 'language-codes.json'))
 tokenizer = BertTokenizer.from_pretrained('bert-base-multilingual-cased')
-special_tokens = ['<loc>', '<per>', '<org>', '<misc>']
-special_tokens_dict = {'additional_special_tokens': special_tokens + tkn(langs)}
+additional_tokens = ['<loc>', '<per>', '<org>', '<misc>']
+additional_tokens_dict = {'additional_tokens': additional_tokens}
+special_tokens_dict = {'additional_special_tokens': tkn(langs)}
+tokenizer.add_tokens(additional_tokens_dict)
 tokenizer.add_special_tokens(special_tokens_dict)
 
 start_token = tokenizer.convert_tokens_to_ids(tokenizer._cls_token)
