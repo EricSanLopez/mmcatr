@@ -15,7 +15,7 @@ import tqdm
 from transformers import BertTokenizer
 
 from models import utils, caption
-from datasets import coco, synthetic, xac
+from datasets import coco, synthetic, xac, laion
 from datasets.utils import read_json, tkn
 from configuration import Config
 from engine import train_one_epoch, evaluate
@@ -51,6 +51,8 @@ def validate(config, args):
             config, synthetic_images=True, synthetic_captions=False, mode='validation')
     elif args.dataset == 'xac':
         dataset_val = xac.build_dataset(config, ner=args.ner, mode='validation')
+    elif args.dataset == 'laion' or args.dataset == 'crossmodal':
+        dataset_val = laion.build_dataset(config, ner=args.ner, mode='validation')
     else:
         raise NotImplementedError('Incorrect dataset from coco, hist_sd or xac')
 
@@ -90,14 +92,14 @@ def validate(config, args):
         preds, targets = predict(model, data_loader_val, tokenizer, config)
         preds = [tokenizer.decode(pred.tolist(), skip_special_tokens=True).capitalize() for pred in preds]
         targets = [[tokenizer.decode(target.tolist(), skip_special_tokens=True).capitalize()] for target in targets]
-        handler_aux = open(f'examples_{experiment}.txt', 'w')
+        handler_aux = open(f'logs/examples_{experiment}.txt', 'w')
         handler_aux.write("prediction\ttarget\n")
         handler_aux.write('\n'.join(['\t'.join([p, t[0]]) for p, t in zip(preds[:50], targets[:50])]))
         handler_aux.close()
 
         print("Start NLP metrics..")
         eval_df = eval_nlp_metrics(preds, targets)
-        eval_df.to_csv(f'nlp_metrics_{experiment}.csv', index=False)
+        eval_df.to_csv(f'logs/nlp_metrics_{experiment}.csv', index=False)
         print(f"NLP metrics: \n{eval_df}")
 
     if args.loss:
@@ -175,6 +177,7 @@ if __name__ == "__main__":
     parser.add_argument('--loss', default=False, type=bool)
     parser.add_argument('--ner', default=False, type=bool)
     parser.add_argument('--checkpoint', default=None, type=str)
+    parser.add_argument('--language', default=None, type=str)
     args = parser.parse_args()
 
     config = Config()

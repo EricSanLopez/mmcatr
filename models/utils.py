@@ -1,6 +1,7 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 from typing import List, Optional
 from collections.abc import Callable
+import os
 
 import torch
 import torch.distributed as dist
@@ -10,7 +11,45 @@ from torch import Tensor
 import numpy as np
 from sklearn.metrics import ndcg_score, average_precision_score
 
+from annoy_index import annoy
+
 from pytorch_metric_learning import miners, losses
+
+
+class ArrayStructure:
+    def __init__(self, array=None, multitask=False):
+        if array is None:
+            self.array = dict() if multitask else list()
+            self.multitask = multitask
+        else:
+            self.array = array
+            self.multitask = type(array) == dict
+
+    def __add__(self, values):
+        if self.multitask:
+            for task in values.keys():
+                try:
+                    self.array[task].append(values[task])
+                except KeyError:
+                    self.array[task] = [values[task]]
+            return ArrayStructure(self.array)
+        else:
+            self.array.append(values)
+            return ArrayStructure(self.array)
+
+
+def save_losses(output_name, epoch_loss, validation_loss):
+    with open(os.path.join('checkpoints', output_name + '.csv'), 'w') as f:
+        if epoch_loss.multitask:
+            f.write(f'epoch,{",".join([f"training_{task}" for task in epoch_loss.array.keys()])},'
+                    f'{",".join([f"validation_{task}" for task in validation_loss.array.keys()])}\n')
+            [f.write(f'{i+1},{",".join([str(epoch_loss.array[task][i]) for task in epoch_loss.array.keys()])},'
+                     f'{",".join([str(validation_loss.array[task][i]) for task in validation_loss.array.keys()])}\n')
+             for i in range(len(epoch_loss.array.values()))]
+        else:
+            f.write('epoch,training,validation\n')
+            f.write('\n'.join([f'{i + 1},{losses[0]},{losses[1]}' for i, losses in
+                               enumerate(zip(epoch_loss.array, validation_loss.array))]))
 
 
 def _max_by_axis(the_list):
@@ -37,6 +76,8 @@ def nested_tensor_from_tensor_list(tensor_list: List[Tensor]):
         for img, pad_img, m in zip(tensor_list, tensor, mask):
             pad_img[: img.shape[0], : img.shape[1], : img.shape[2]].copy_(img)
             m[: img.shape[1], :img.shape[2]] = False
+    elif len(tensor_list) == 2:
+        return NestedTensor(tensor_list[0], tensor_list[1])
     else:
         raise ValueError('not supported')
     return NestedTensor(tensor, mask)
@@ -98,6 +139,7 @@ class CosineSimilarityMatrix(nn.Module):
 
     def forward(self, x1: Tensor, x2: Tensor) -> Tensor:
         return cosine_similarity_matrix(x1, x2, self.dim, self.eps)
+
 
 def cosine_similarity_matrix(x1: Tensor, x2: Tensor, dim: int = 1, eps: float = 1e-8) -> Tensor:
     '''
@@ -255,3 +297,22 @@ def get_criterion(criterion):
             return MetricLearning()
         case other:
             raise NotImplementedError(f'Criterion {criterion} not in ["NDCG", "Triplet"]')
+
+
+def get_optimizer(model, config):
+    n_parameters = sum(p.numel()
+                       for p in model.parameters() if p.requires_grad)
+    print(f"Number of params: {n_parameters}")
+
+    param_dicts = [
+        {"params": [p for n, p in model.named_parameters(
+        ) if "backbone" not in n and p.requires_grad]},
+        {
+            "params": [p for n, p in model.named_parameters() if "backbone" in n and p.requires_grad],
+            "lr": config.lr_backbone,
+        },
+    ]
+    optimizer = torch.optim.AdamW(
+        param_dicts, lr=config.lr, weight_decay=config.weight_decay)
+    lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, config.lr_drop)
+    return optimizer, lr_scheduler

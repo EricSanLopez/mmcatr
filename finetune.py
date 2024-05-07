@@ -10,7 +10,7 @@ import time
 import sys
 
 from models import utils, caption
-from datasets import coco, synthetic, xac
+from datasets.dataloader import build_dataloader
 from configuration import Config
 from engine import train_one_epoch, train_one_epoch_multitask, evaluate, evaluate_multitask
 
@@ -21,9 +21,10 @@ warnings.filterwarnings("ignore")  # Ignoring bleu score unnecessary warnings.
 
 
 def finetune(config, args):
-    with wandb.init(project="XAC-ImageCaptioning",
-                    name=f'Finetune_from_{args.checkpoint}_to_{args.dataset} (NER={args.ner})',
-                    config=config):  # Starting wandb
+    output_name = get_output_name(args)
+    with (wandb.init(project="XAC-ImageCaptioning",
+                     name=f'Finetune_from_{args.checkpoint}_to_{args.dataset} (NER={args.ner})',
+                     config=config)):  # Starting wandb
         device = torch.device(config.device)
         print(f'Initializing Device: {device}')
 
@@ -37,7 +38,7 @@ def finetune(config, args):
         try:
             checkpoint = torch.load(checkpoint_path, map_location='cpu')
         except:
-            raise NotImplementedError('Incorrect checkpoint from coco, hist_sd or xac')
+            raise NotImplementedError('Incorrect checkpoint from the checkpoints folder')
         model.load_state_dict(checkpoint['model'])
         model.to(device)
 
@@ -45,107 +46,77 @@ def finetune(config, args):
         config.epochs = args.epochs
         config.lr_drop = 8
 
-        n_parameters = sum(p.numel()
-                           for p in model.parameters() if p.requires_grad)
-        print(f"Number of params: {n_parameters}")
+        optimizer, lr_scheduler = utils.get_optimizer(model, config)
 
-        param_dicts = [
-            {"params": [p for n, p in model.named_parameters(
-            ) if "backbone" not in n and p.requires_grad]},
-            {
-                "params": [p for n, p in model.named_parameters() if "backbone" in n and p.requires_grad],
-                "lr": config.lr_backbone,
-            },
-        ]
-        optimizer = torch.optim.AdamW(
-            param_dicts, lr=config.lr, weight_decay=config.weight_decay)
-        lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, config.lr_drop)
+        data_loader_train, data_loader_val, aux = build_dataloader(
+            args.dataset, args.date_estimation, config, args.language, args.ner, args.synthetic_images,
+            args.synthetic_captions, args.weighted_criterion)
 
-        if args.dataset == 'coco':
-            dataset_train = coco.build_dataset(config, mode='training')
-            dataset_val = coco.build_dataset(config, mode='validation')
-        elif args.dataset == 'hist_sd':
-            dataset_train = synthetic.build_dataset(
-                config, synthetic_images=True, synthetic_captions=False, mode='training')
-            dataset_val = synthetic.build_dataset(
-                config, synthetic_images=True, synthetic_captions=False, mode='validation')
-        elif args.dataset == 'xac':
-            dataset_train = xac.build_dataset(config, ner=args.ner, mode='training')
-            dataset_val = xac.build_dataset(config, ner=args.ner, mode='validation')
-
-        print(f"Train: {len(dataset_train)}")
-        print(f"Valid: {len(dataset_val)}")
-
-        if args.weighted_criterion:
-            weights = dataset_train.get_weights(config.new_vocab_size).to(config.device)
-            criterion = nn.CrossEntropyLoss(weight=weights, ignore_index=0)
-
-        sampler_train = torch.utils.data.RandomSampler(dataset_train)
-        sampler_val = torch.utils.data.SequentialSampler(dataset_val)
-
-        batch_sampler_train = torch.utils.data.BatchSampler(
-            sampler_train, config.batch_size, drop_last=True
-        )
-
-        data_loader_train = DataLoader(
-            dataset_train, batch_sampler=batch_sampler_train, num_workers=config.num_workers)
-        data_loader_val = DataLoader(
-            dataset_val, config.batch_size, sampler=sampler_val, drop_last=False, num_workers=config.num_workers)
+        criterion = aux if args.weighted_criterion else criterion
 
         print("Start Training..")
-        if args.datation:
-            global_loss, global_validation_loss = dict(), dict()
-        else:
-            global_loss, global_validation_loss = list(), list()
+        global_loss, global_validation_loss = utils.ArrayStructure(multitask=args.datation), \
+            utils.ArrayStructure(multitask=args.datation)
+
         for epoch in range(config.start_epoch, config.epochs):
             print(f"Epoch: {epoch}")
+
+            # Training
             if args.datation:
                 epoch_loss = train_one_epoch_multitask(
                     model, criterion, criterion_datation, data_loader_train, optimizer, device, epoch,
                     config.clip_max_norm)
                 lr_scheduler.step()
-                for task in epoch_loss.keys():
-                    print(f"Training Loss for {task}: {epoch_loss[task]}")
-                    try:
-                        global_loss[task].append(epoch_loss[task])
-                    except:
-                        global_loss[task] = [epoch_loss[task]]
+
+                global_loss += epoch_loss
+                [print(f"Training Loss for {task}: {epoch_loss[task]}") for task in epoch_loss.keys()]
                 wandb.log({f'epoch_loss_{task}': epoch_loss[task] for task in epoch_loss.keys()})
+
             else:
                 epoch_loss = train_one_epoch(
                     model, criterion, data_loader_train, optimizer, device, epoch, config.clip_max_norm)
                 lr_scheduler.step()
+
+                global_loss += epoch_loss
                 print(f"Training Loss for captioning: {epoch_loss}")
-                global_loss.append(epoch_loss)
                 wandb.log({f'epoch_loss_captioning': epoch_loss})
 
+            # Save model and metadata
             torch.save({
                 'model': model.state_dict(),
                 'optimizer': optimizer.state_dict(),
                 'lr_scheduler': lr_scheduler.state_dict(),
                 'epoch': epoch,
-            }, os.path.join('checkpoints', f'checkpoint_from_{args.checkpoint}_to_{args.dataset}_ner_{args.ner}.pth'))
+            }, os.path.join('checkpoints', output_name + '.pth'))
 
+            # Validation
             if args.datation:
                 validation_loss = evaluate_multitask(model, criterion, criterion_datation, data_loader_val, device)
-                for task in validation_loss.keys():
-                    print(f"Validation Loss for {task}: {validation_loss[task]}")
-                    try:
-                        global_validation_loss[task].append(validation_loss[task])
-                    except:
-                        global_validation_loss[task] = [validation_loss[task]]
+
+                global_validation_loss += validation_loss
+                [print(f"Validation Loss for {task}: {validation_loss[task]}") for task in validation_loss.keys()]
                 wandb.log({f'epoch_validation_loss_{task}': validation_loss[task] for task in validation_loss.keys()})
+
             else:
                 validation_loss = evaluate(model, criterion, data_loader_val, device)
+                global_validation_loss += validation_loss
                 print(f"Validation Loss for captioning: {validation_loss}")
                 wandb.log({f'epoch_validation_loss_captioning': validation_loss})
 
             print()
 
-        with open(f'checkpoints/checkpoint_from_{args.checkpoint}_to_{args.dataset}_ner_{args.ner}.tsv', 'w') as f:
-            f.write('epoch\ttraining\tvalidation\n')
-            f.write('\n'.join([f'{i + 1}\t{losses[0]}\t{losses[1]}' for i, losses in
-                               enumerate(zip(global_loss, global_validation_loss))]))
+        utils.save_losses(output_name, global_loss, global_validation_loss)
+
+
+def get_output_name(args):
+    output_name = f'checkpoint_from_{args.checkpoint}_to_{args.dataset}'
+    if args.dataset == 'xac':
+        output_name += f'_ner_{args.ner}'
+    elif args.dataset == 'laion':
+        output_name += f'_{args.language}'
+    elif args.dataset == 'synthetic':
+        output_name += f'_{args.synthetic_images}_{args.synthetic_captions}'
+    return output_name
 
 
 if __name__ == "__main__":
@@ -157,6 +128,7 @@ if __name__ == "__main__":
     parser.add_argument('--weighted_criterion', default=False, type=bool)
     parser.add_argument('--datation', default=False, type=bool)
     parser.add_argument('--ner', default=False, type=bool)
+    parser.add_argument('--language', default=None, type=str)
     args = parser.parse_args()
 
     config = Config()

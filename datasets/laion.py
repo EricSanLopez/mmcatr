@@ -1,17 +1,14 @@
 from torch.utils.data import Dataset
-from torch import Tensor
-import torch
 import torchvision.transforms.functional as TF
 import torchvision as tv
+from torch import Tensor
+import torch
 
 from PIL import Image
 import numpy as np
 import pandas as pd
 import random
 import os
-import tqdm
-
-import random
 
 from transformers import BertTokenizer
 
@@ -35,7 +32,7 @@ def under_max(image):
 
 
 class RandomRotation:
-    def __init__(self, angles=(0, 90, 180, 270)):
+    def __init__(self, angles=[0, 90, 180, 270]):
         self.angles = angles
 
     def __call__(self, x):
@@ -60,17 +57,15 @@ val_transform = tv.transforms.Compose([
 ])
 
 
-class SyntheticCaption(Dataset):
-    def __init__(self, root, data, max_length, limit, transform=train_transform, mode='training'):
+class LAIONCaption(Dataset):
+    def __init__(self, root, ann, lang, ner, max_length, transform=train_transform):
         super().__init__()
 
         self.root = root
         self.transform = transform
-        self.annot = [(self._process(row[0]), row[1]) for row in data.itertuples(index=False)]
-        if mode == 'validation':
-            self.annot = self.annot
-        if mode == 'training':
-            self.annot = self.annot[: limit]
+        self.annot = ann
+        self.lang = lang
+        self.ner = ner
 
         # Initialize tokenizer (adding language and named entity tokens)
         langs = read_json(os.path.join("/data2fast/users/esanchez", "laion", 'language-codes.json'))
@@ -83,35 +78,35 @@ class SyntheticCaption(Dataset):
 
         self.max_length = max_length + 1
 
-    def _process(self, image_id):
-        if str(image_id)[-1] == 'g':
-            return image_id
-        dir_id = int(image_id) // 4096
-        return os.path.join(str(dir_id), str(image_id) + '.jpg')
-
     def __len__(self):
         return len(self.annot)
 
-    def get_weights(self, size, synthetic_captions):
+    def get_weights(self, size, placeholder):
         try:
-            weights = torch.load(os.path.join('checkpoints', f'weights_synthetic_{synthetic_captions}.pth'))['weights']
+            weights = torch.load(os.path.join('checkpoints', f'weights_laion_{self.lang}' +
+                                              ('_ner' if self.ner else '') + '.pth'))['weights']
         except FileNotFoundError:
             weights = [0]*size
-            for ann in tqdm.tqdm(self.annot):
+            for ann in self.annot:
                 caption = ann[1]
                 tokens = self.tokenizer.encode(caption)
                 for i in tokens:
                     weights[i] += 1
             weights = Tensor(1 - np.array(weights) / sum(weights))
+            weights[119547: 119547 + 4] = 1
 
             torch.save({
                 'weights': weights
-            }, os.path.join('checkpoints', f'weights_synthetic_{synthetic_captions}.pth'))
+            }, os.path.join('checkpoints', f'weights_laion_{self.lang}' + ('_ner' if self.ner else '') + '.pth'))
+
         return weights
+
+    def _process(self, image_id):
+        return str(image_id) + '.jpg'
 
     def __getitem__(self, idx):
         image_id, caption = self.annot[idx]
-        image = Image.open(os.path.join(self.root, image_id))
+        image = Image.open(os.path.join(self.root, self._process(image_id)))
 
         if self.transform:
             image = self.transform(image)
@@ -128,28 +123,26 @@ class SyntheticCaption(Dataset):
         return 'captioning', image.tensors.squeeze(0), image.mask.squeeze(0), caption, cap_mask
 
 
-def build_dataset(config, synthetic_images=True, synthetic_captions=False, mode='training'):
-    root = config.dir
-    image = 'synthetic_image' if synthetic_images else 'image'
-
+def build_dataset(config, lang, ner, mode='training'):
+    root = os.path.join(config.dir, 'laion')
     if mode == 'training':
-        train_dir = os.path.join(root, 'historic_sd/images' if synthetic_images else 'coco2017/train')
-        train_file = os.path.join(root, 'coco2017', 'captions_train_cat.tsv' if synthetic_captions else
-                                  'captions_train.tsv')
-        df = pd.read_csv(train_file, sep='\t')[[image, 'caption']]
-        df.columns = [['image', 'caption']]
-        data = SyntheticCaption(train_dir, df, max_length=config.max_position_embeddings, limit=config.limit,
-                                transform=train_transform, mode='training')
+        train_dir = os.path.join(root, 'img_size')
+        train_file = os.path.join(root, 'train_coincidences.csv' if not ner else 'train_ner.tsv')
+        ann = pd.read_csv(train_file, sep='\t')
+        ann = ann[ann['LANGUAGE'] == lang]
+        ann = [(img, caption[:config.max_position_embeddings]) for img, caption in zip(ann['SAMPLE_ID'], ann['TEXT'])]
+        data = LAIONCaption(train_dir, ann, lang=lang, ner=ner, max_length=config.max_position_embeddings,
+                            transform=train_transform)
         return data
 
     elif mode == 'validation':
-        val_dir = os.path.join(root, 'historic_sd/images' if synthetic_images else 'coco2017/test')
-        val_file = os.path.join(root, 'coco2017', 'captions_test_cat.tsv' if synthetic_captions else
-                                'captions_test.tsv')
-        df = pd.read_csv(val_file, sep='\t')[[image, 'caption']]
-        df.columns = [['image', 'caption']]
-        data = SyntheticCaption(val_dir, df, max_length=config.max_position_embeddings, limit=config.limit,
-                                transform=val_transform, mode='validation')
+        val_dir = os.path.join(root, 'crossmodal_imgs')
+        val_file = os.path.join(root, 'captions.tsv')
+        ann = pd.read_csv(val_file, sep='\t')
+        ann = ann[ann['lang'] == lang]
+        ann = [(img, caption[:config.max_position_embeddings]) for img, caption in zip(ann['image/key'], ann['caption'])]
+        data = LAIONCaption(val_dir, ann, lang=lang, ner=ner, max_length=config.max_position_embeddings,
+                            transform=val_transform)
         return data
 
     else:

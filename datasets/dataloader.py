@@ -1,4 +1,5 @@
 import torch
+import torch.nn as nn
 from typing import Optional, List
 from torch import Tensor
 from torch.utils.data import DataLoader
@@ -6,6 +7,7 @@ from torch.utils.data import DataLoader
 from .synthetic import build_dataset as bd_synthetic
 from .xac import build_dataset as bd_xac
 from .dew import build_dataset as bd_dew
+from .laion import build_dataset as bd_laion
 
 import json
 import os
@@ -42,7 +44,8 @@ class MultitaskLoader:
         self.iterators = [iter(data_loader) for data_loader in self.data_loaders]
 
 
-def build_dataloader(dataset, datation, config, synthetic_images=False, synthetic_captions=False):
+def build_dataloader(dataset, datation, config, lang=None, ner=False, synthetic_images=False, synthetic_captions=False,
+                     weighted_criterion=False):
     if dataset == 'synthetic':
         dataset_train = bd_synthetic(
             config, synthetic_images=synthetic_images,
@@ -51,10 +54,13 @@ def build_dataloader(dataset, datation, config, synthetic_images=False, syntheti
             config, synthetic_images=synthetic_images,
             synthetic_captions=synthetic_captions, mode='validation')
     elif dataset == 'xac':
-        dataset_train = bd_xac(config, mode='training')
-        dataset_val = bd_xac(config, mode='validation')
+        dataset_train = bd_xac(config, ner=ner, mode='training')
+        dataset_val = bd_xac(config, ner=ner, mode='validation')
+    elif dataset == 'laion':
+        dataset_train = bd_laion(config, lang=lang, ner=ner, mode='training')
+        dataset_val = bd_laion(config, lang=lang, ner=ner, mode='validation')
     else:
-        raise NotImplementedError(f'Dataset {dataset} not in ["synthetic", "xac"]')
+        raise NotImplementedError(f'Dataset {dataset} not in ["synthetic", "xac", "laion"]')
 
     print(f"Train {dataset}: {len(dataset_train)}")
     print(f"Valid {dataset}: {len(dataset_val)}")
@@ -75,6 +81,9 @@ def build_dataloader(dataset, datation, config, synthetic_images=False, syntheti
         dataset_train_dew = bd_dew(config, mode="training")
         dataset_val_dew = bd_dew(config, mode="validation")
 
+        print(f"Train DEW: {len(dataset_train_dew)}")
+        print(f"Valid DEW: {len(dataset_val_dew)}")
+
         sampler_train_dew = torch.utils.data.RandomSampler(dataset_train_dew)
         sampler_val_dew = torch.utils.data.SequentialSampler(dataset_val_dew)
 
@@ -91,4 +100,9 @@ def build_dataloader(dataset, datation, config, synthetic_images=False, syntheti
         data_loader_train = MultitaskLoader([data_loader_train, data_loader_train_dew], config.batch_size)
         data_loader_val = MultitaskLoader([data_loader_val, data_loader_val_dew], config.batch_size)
 
-    return data_loader_train, data_loader_val
+    if weighted_criterion:
+        weights = dataset_train.get_weights(config.new_vocab_size, synthetic_captions).to(config.device)
+        criterion = nn.CrossEntropyLoss(weight=weights, ignore_index=0)
+        return data_loader_train, data_loader_val, criterion
+
+    return data_loader_train, data_loader_val, None

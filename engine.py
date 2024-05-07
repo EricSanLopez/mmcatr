@@ -15,6 +15,7 @@ def train_one_epoch(model, criterion, data_loader,
     criterion.train()
 
     epoch_loss = 0.0
+    last_loss = 0.0
     total = len(data_loader)
 
     with tqdm.tqdm(total=total) as pbar:
@@ -27,7 +28,7 @@ def train_one_epoch(model, criterion, data_loader,
             outputs = model(samples, caps[:, :-1], cap_masks[:, :-1])
             loss = criterion(outputs.permute(0, 2, 1), caps[:, 1:])
             loss_value = loss.item()
-            epoch_loss += loss_value
+            last_loss += loss_value
 
             if not math.isfinite(loss_value):
                 print(f'Loss is {loss_value}, stopping training')
@@ -39,8 +40,10 @@ def train_one_epoch(model, criterion, data_loader,
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
             optimizer.step()
 
-            if (i + 1) % 50 == 0:
-                train_log(loss_value, 'captioning', data[1].shape[0] * i, epoch)
+            if i % 50 == 49:
+                epoch_loss += last_loss
+                train_log(last_loss / 50, 'captioning', data[1].shape[0] * i, epoch)
+                last_loss = 0.0
 
             pbar.update(1)
 
@@ -55,7 +58,7 @@ def train_one_epoch_multitask(model, criterion, criterion_datation, data_loader,
     epoch_loss = {'captioning': 0.0, 'datation': 0.0}
     idx = {'captioning': 0, 'datation': 0}
     total = len(data_loader)
-
+    last_loss = {'captioning': 0.0, 'datation': 0.0}
     with tqdm.tqdm(total=total) as pbar:
         for data in iter(data_loader):
             task = data[0][0]
@@ -71,7 +74,7 @@ def train_one_epoch_multitask(model, criterion, criterion_datation, data_loader,
                     raise NotImplementedError(f'Task {task} not in ["captioning", "datation"]')
 
             loss_value = loss.item()
-            epoch_loss[task] += loss_value
+            last_loss[task] += loss_value
 
             if not math.isfinite(loss_value):
                 print(f'Loss is {loss_value}, stopping training')
@@ -85,8 +88,11 @@ def train_one_epoch_multitask(model, criterion, criterion_datation, data_loader,
 
             pbar.update(1)
 
-            if (idx[task] + 1) % 50 == 0:
-                train_log(loss_value, task, data[1].shape[0] * idx[task], epoch)
+            if idx[task] % 50 == 49:
+                epoch_loss[task] += last_loss[task]
+                last_loss[task] /= 50
+                train_log(last_loss, task, data[1].shape[0] * idx[task], epoch)
+                last_loss[task] = 0
 
             idx[task] += 1
 

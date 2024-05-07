@@ -78,13 +78,19 @@ class DewDatation(Dataset):
 
         return 'datation', image.tensors.squeeze(0), image.mask.squeeze(0), target
 
+    def get_image(self, idx):
+        target, image_id = self.data.iloc[idx]
+        image = Image.open(os.path.join(self.root, self._process(image_id) + '.jpg'))
+        return image, target
+
 
 def build_dataset(config, mode='training'):
     root = os.path.join(config.dir, 'dew')
     if mode == 'training':
         train_dir = os.path.join(root, 'images')
         train_file = os.path.join(root, 'gt_train_ok.csv')
-        data = DewDatation(train_dir, pd.read_csv(train_file, names=['target', 'file']), transform=train_transform)
+        data = DewDatation(train_dir, pd.read_csv(train_file, names=['target', 'file'])[:591752],
+                           transform=train_transform)
         return data
 
     elif mode == 'validation':

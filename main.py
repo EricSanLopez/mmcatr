@@ -12,17 +12,17 @@ from torch.utils.data import DataLoader
 from models import utils, caption
 from datasets.dataloader import build_dataloader
 from configuration import Config
-from engine import train_one_epoch, evaluate
+from engine import train_one_epoch, train_one_epoch_multitask, evaluate, evaluate_multitask
 
 import argparse
 import warnings
-
 warnings.filterwarnings('ignore')
 
 
 def main(config, args):
+    output_name = get_output_name(args)
     with wandb.init(project="XAC-ImageCaptioning",
-                    name=f'{config.experiment}_{args.synthetic_images}_{args.synthetic_captions}',
+                    name=output_name,
                     config=config):
 
         config = wandb.config  # access all HPs through wandb.config, so logging matches execution
@@ -33,29 +33,17 @@ def main(config, args):
         torch.manual_seed(seed)
         np.random.seed(seed)
 
-        model, criterion = caption.build_model(config, args.date_estimation)
+        model, criterion = caption.build_model(config, multimodal=args.date_estimation)
         model.to(device)
 
         criterion_datation = utils.get_criterion("Triplet")
+        optimizer, lr_scheduler = utils.get_optimizer(model, config)
 
-        n_parameters = sum(p.numel()
-                           for p in model.parameters() if p.requires_grad)
-        print(f"Number of params: {n_parameters}")
+        data_loader_train, data_loader_val, aux = build_dataloader(
+            args.dataset, args.date_estimation, config, args.language, args.ner, args.synthetic_images,
+            args.synthetic_captions, args.weighted_criterion)
 
-        param_dicts = [
-            {"params": [p for n, p in model.named_parameters(
-            ) if "backbone" not in n and p.requires_grad]},
-            {
-                "params": [p for n, p in model.named_parameters() if "backbone" in n and p.requires_grad],
-                "lr": config.lr_backbone,
-            },
-        ]
-        optimizer = torch.optim.AdamW(
-            param_dicts, lr=config.lr, weight_decay=config.weight_decay)
-        lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, config.lr_drop)
-
-        data_loader_train, data_loader_val = build_dataloader(
-            args.dataset, args.date_estimation, config, args.synthetic_images, args.synthetic_captions)
+        criterion = aux if args.weighted_criterion else criterion
 
         if os.path.exists(config.checkpoint):
             print("Loading Checkpoint...")
@@ -66,45 +54,66 @@ def main(config, args):
             config.start_epoch = checkpoint['epoch'] + 1
 
         print("Start Training..")
-        global_loss = dict()
-        global_validation_loss = dict()
+        global_loss, global_validation_loss = utils.ArrayStructure(multitask=args.date_estimation), \
+            utils.ArrayStructure(multitask=args.date_estimation)
+
         for epoch in range(config.start_epoch, config.epochs):
             print(f"Epoch: {epoch}")
-            epoch_loss = train_one_epoch(
-                model, criterion, criterion_datation, data_loader_train,
-                optimizer, device, epoch, config.clip_max_norm)
-            lr_scheduler.step()
-            for task in epoch_loss.keys():
-                print(f"Training Loss for {task}: {epoch_loss[task]}")
-                try:
-                    global_loss[task].append(epoch_loss[task])
-                except:
-                    global_loss[task] = [epoch_loss[task]]
-            wandb.log({f'epoch_loss_{task}': epoch_loss[task] for task in epoch_loss.keys()})
 
+            # Training
+            if args.date_estimation:
+                epoch_loss = train_one_epoch_multitask(
+                    model, criterion, criterion_datation, data_loader_train, optimizer, device, epoch,
+                    config.clip_max_norm)
+                lr_scheduler.step()
+
+                global_loss += epoch_loss
+                [print(f"Training Loss for {task}: {epoch_loss[task]}") for task in epoch_loss.keys()]
+                wandb.log({f'epoch_loss_{task}': epoch_loss[task] for task in epoch_loss.keys()})
+
+            else:
+                epoch_loss = train_one_epoch(
+                    model, criterion, data_loader_train, optimizer, device, epoch, config.clip_max_norm)
+                lr_scheduler.step()
+
+                global_loss += epoch_loss
+                print(f"Training Loss for captioning: {epoch_loss}")
+                wandb.log({f'epoch_loss_captioning': epoch_loss})
+
+            # Save model and metadata
             torch.save({
                 'model': model.state_dict(),
                 'optimizer': optimizer.state_dict(),
                 'lr_scheduler': lr_scheduler.state_dict(),
                 'epoch': epoch,
-            }, os.path.join('checkpoints',
-                            f'{config.experiment}_{args.synthetic_images}_{args.synthetic_captions}.pth'))
+            }, os.path.join('checkpoints', output_name + '.pth'))
 
-            validation_loss = evaluate(model, criterion, data_loader_val, device)
-            for task in validation_loss.keys():
-                print(f"Validation Loss for {task}: {validation_loss[task]}")
-                try:
-                    global_validation_loss[task].append(validation_loss[task])
-                except:
-                    global_validation_loss[task] = [validation_loss[task]]
-            wandb.log({f'epoch_validation_loss_{task}': validation_loss[task] for task in validation_loss.keys()})
+            if args.date_estimation:
+                validation_loss = evaluate_multitask(model, criterion, criterion_datation, data_loader_val, device)
+
+                global_validation_loss += validation_loss
+                [print(f"Validation Loss for {task}: {validation_loss[task]}") for task in validation_loss.keys()]
+                wandb.log({f'epoch_validation_loss_{task}': validation_loss[task] for task in validation_loss.keys()})
+
+            else:
+                validation_loss = evaluate(model, criterion, data_loader_val, device)
+                global_validation_loss += validation_loss
+                print(f"Validation Loss for captioning: {validation_loss}")
+                wandb.log({f'epoch_validation_loss_captioning': validation_loss})
 
             print()
 
-        with open(f'checkpoints/{config.experiment}_{args.synthetic_images}_{args.synthetic_captions}.tsv', 'w') as f:
-            f.write('epoch\ttraining\tvalidation\n')
-            f.write('\n'.join([f'{i + 1}\t{losses[0]}\t{losses[1]}' for i, losses in
-                               enumerate(zip(global_loss, global_validation_loss))]))
+        utils.save_losses(output_name, global_loss, global_validation_loss)
+
+
+def get_output_name(args):
+    output_name = 'multimodal_' if args.date_estimation else ''
+    if args.dataset == 'synthetic':
+        output_name += f'{config.experiment}_{args.synthetic_images}_{args.synthetic_captions}'
+    else:
+        output_name += f'{config.experiment}_{args.dataset}' + (f'_{args.language}' if args.dataset == 'laion' else '')\
+            + (f'_ner' if args.ner else '')
+    return output_name
 
 
 if __name__ == "__main__":
@@ -114,6 +123,9 @@ if __name__ == "__main__":
     parser.add_argument('-sc', '--synthetic_captions', default=False, type=bool)
     parser.add_argument('-d', '--dataset', default='synthetic', type=str)
     parser.add_argument('-e', '--date_estimation', default=False, type=bool)
+    parser.add_argument('-w', '--weighted_criterion', default=False, type=bool)
+    parser.add_argument('-l', '--language', default=None, type=str)
+    parser.add_argument('-n', '--ner', default=False, type=bool)
     args = parser.parse_args()
 
     config = Config()

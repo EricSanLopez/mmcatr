@@ -38,7 +38,7 @@ torch.manual_seed(seed)
 np.random.seed(seed)
 
 # Variables and paths
-checkpoint_path = "checkpoints/checkpoint_from_experiment_True_True_to_xac_ner_True.pth"
+checkpoint_path = "checkpoints/checkpoint_from_experiment_False_True_to_xac_ner_True.pth"
 dataset_val = xac.build_dataset(config, ner=True, mode='validation')
 
 langs = read_json(os.path.join("/data2fast/users/esanchez", "laion", 'language-codes.json'))

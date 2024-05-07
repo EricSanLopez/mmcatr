@@ -2,6 +2,7 @@ from torch.utils.data import Dataset
 import torchvision.transforms.functional as TF
 import torchvision as tv
 from torch import Tensor
+import torch
 
 from PIL import Image
 import numpy as np
@@ -83,15 +84,22 @@ class XACCaption(Dataset):
     def __len__(self):
         return len(self.annot)
 
-    def get_weights(self, size):
-        weights = [0]*size
-        for ann in self.annot:
-            caption = ann[1]
-            tokens = self.tokenizer.encode(caption)
-            for i in tokens:
-                weights[i] += 1
-        weights = Tensor(1 - np.array(weights) / sum(weights))
-        weights[119547: 119547 + 4] = 1
+    def get_weights(self, size, ner):
+        try:
+            weights = torch.load(os.path.join('checkpoints', f'weights_xac_ner_{ner}.pth'))['weights']
+        except FileNotFoundError:
+            weights = [0]*size
+            for ann in self.annot:
+                caption = ann[1]
+                tokens = self.tokenizer.encode(caption)
+                for i in tokens:
+                    weights[i] += 1
+            weights = Tensor(1 - np.array(weights) / sum(weights))
+            weights[119547: 119547 + 4] = 1
+
+            torch.save({
+                'weights': weights
+            }, os.path.join('checkpoints', f'weights_xac_ner_{ner}.pth'))
 
         return weights
 
