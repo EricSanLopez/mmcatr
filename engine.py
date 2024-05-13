@@ -91,7 +91,7 @@ def train_one_epoch_multitask(model, criterion, criterion_datation, data_loader,
             if idx[task] % 50 == 49:
                 epoch_loss[task] += last_loss[task]
                 last_loss[task] /= 50
-                train_log(last_loss, task, data[1].shape[0] * idx[task], epoch)
+                train_log(last_loss[task], task, data[1].shape[0] * idx[task], epoch)
                 last_loss[task] = 0
 
             idx[task] += 1

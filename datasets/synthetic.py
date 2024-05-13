@@ -46,22 +46,20 @@ class RandomRotation:
 train_transform = tv.transforms.Compose([
     RandomRotation(),
     tv.transforms.Lambda(under_max),
-    tv.transforms.ColorJitter(brightness=[0.5, 1.3], contrast=[
-                              0.8, 1.5], saturation=[0.2, 1.5]),
     tv.transforms.RandomHorizontalFlip(),
     tv.transforms.ToTensor(),
-    tv.transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+    tv.transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 ])
 
 val_transform = tv.transforms.Compose([
     tv.transforms.Lambda(under_max),
     tv.transforms.ToTensor(),
-    tv.transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+    tv.transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 ])
 
 
 class SyntheticCaption(Dataset):
-    def __init__(self, root, data, max_length, limit, transform=train_transform, mode='training'):
+    def __init__(self, root, data, max_length, limit, transform=train_transform, mode='training', token=False):
         super().__init__()
 
         self.root = root
@@ -71,6 +69,7 @@ class SyntheticCaption(Dataset):
             self.annot = self.annot
         if mode == 'training':
             self.annot = self.annot[: limit]
+        self.token = token
 
         # Initialize tokenizer (adding language and named entity tokens)
         langs = read_json(os.path.join("/data2fast/users/esanchez", "laion", 'language-codes.json'))
@@ -92,25 +91,10 @@ class SyntheticCaption(Dataset):
     def __len__(self):
         return len(self.annot)
 
-    def get_weights(self, size, synthetic_captions):
-        try:
-            weights = torch.load(os.path.join('checkpoints', f'weights_synthetic_{synthetic_captions}.pth'))['weights']
-        except FileNotFoundError:
-            weights = [0]*size
-            for ann in tqdm.tqdm(self.annot):
-                caption = ann[1]
-                tokens = self.tokenizer.encode(caption)
-                for i in tokens:
-                    weights[i] += 1
-            weights = Tensor(1 - np.array(weights) / sum(weights))
-
-            torch.save({
-                'weights': weights
-            }, os.path.join('checkpoints', f'weights_synthetic_{synthetic_captions}.pth'))
-        return weights
-
     def __getitem__(self, idx):
         image_id, caption = self.annot[idx]
+        if self.token:
+            caption = f'{tkn(self.token)} {caption}'
         image = Image.open(os.path.join(self.root, image_id))
 
         if self.transform:
@@ -128,9 +112,10 @@ class SyntheticCaption(Dataset):
         return 'captioning', image.tensors.squeeze(0), image.mask.squeeze(0), caption, cap_mask
 
 
-def build_dataset(config, synthetic_images=True, synthetic_captions=False, mode='training'):
+def build_dataset(config, synthetic_images=True, synthetic_captions=False, mode='training', token=False):
     root = config.dir
     image = 'synthetic_image' if synthetic_images else 'image'
+    token = token if not token else ('ca' if synthetic_captions else 'en')
 
     if mode == 'training':
         train_dir = os.path.join(root, 'historic_sd/images' if synthetic_images else 'coco2017/train')
@@ -139,7 +124,7 @@ def build_dataset(config, synthetic_images=True, synthetic_captions=False, mode=
         df = pd.read_csv(train_file, sep='\t')[[image, 'caption']]
         df.columns = [['image', 'caption']]
         data = SyntheticCaption(train_dir, df, max_length=config.max_position_embeddings, limit=config.limit,
-                                transform=train_transform, mode='training')
+                                transform=train_transform, mode='training', token=token)
         return data
 
     elif mode == 'validation':
@@ -149,7 +134,7 @@ def build_dataset(config, synthetic_images=True, synthetic_captions=False, mode=
         df = pd.read_csv(val_file, sep='\t')[[image, 'caption']]
         df.columns = [['image', 'caption']]
         data = SyntheticCaption(val_dir, df, max_length=config.max_position_embeddings, limit=config.limit,
-                                transform=val_transform, mode='validation')
+                                transform=val_transform, mode='validation', token=token)
         return data
 
     else:

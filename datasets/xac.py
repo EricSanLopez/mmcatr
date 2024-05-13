@@ -43,22 +43,20 @@ class RandomRotation:
 train_transform = tv.transforms.Compose([
     RandomRotation(),
     tv.transforms.Lambda(under_max),
-    tv.transforms.ColorJitter(brightness=[0.5, 1.3], contrast=[
-                              0.8, 1.5], saturation=[0.2, 1.5]),
     tv.transforms.RandomHorizontalFlip(),
     tv.transforms.ToTensor(),
-    tv.transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+    tv.transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 ])
 
 val_transform = tv.transforms.Compose([
     tv.transforms.Lambda(under_max),
     tv.transforms.ToTensor(),
-    tv.transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+    tv.transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 ])
 
 
 class XACCaption(Dataset):
-    def __init__(self, root, ann, max_length, limit, transform=train_transform, mode='training'):
+    def __init__(self, root, ann, max_length, limit, transform=train_transform, mode='training', token=False):
         super().__init__()
 
         self.root = root
@@ -69,6 +67,7 @@ class XACCaption(Dataset):
             self.annot = self.annot
         if mode == 'training':
             self.annot = self.annot[: limit]
+        self.token = token
 
         # Initialize tokenizer (adding language and named entity tokens)
         langs = read_json(os.path.join("/data2fast/users/esanchez", "laion", 'language-codes.json'))
@@ -84,27 +83,10 @@ class XACCaption(Dataset):
     def __len__(self):
         return len(self.annot)
 
-    def get_weights(self, size, ner):
-        try:
-            weights = torch.load(os.path.join('checkpoints', f'weights_xac_ner_{ner}.pth'))['weights']
-        except FileNotFoundError:
-            weights = [0]*size
-            for ann in self.annot:
-                caption = ann[1]
-                tokens = self.tokenizer.encode(caption)
-                for i in tokens:
-                    weights[i] += 1
-            weights = Tensor(1 - np.array(weights) / sum(weights))
-            weights[119547: 119547 + 4] = 1
-
-            torch.save({
-                'weights': weights
-            }, os.path.join('checkpoints', f'weights_xac_ner_{ner}.pth'))
-
-        return weights
-
     def __getitem__(self, idx):
         image_id, caption = self.annot[idx]
+        if self.token:
+            caption = f'<ca> {caption}'
         image = Image.open(os.path.join(self.root, image_id))
 
         if self.transform:
@@ -122,20 +104,20 @@ class XACCaption(Dataset):
         return 'captioning', image.tensors.squeeze(0), image.mask.squeeze(0), caption, cap_mask
 
 
-def build_dataset(config, ner=False, mode='training'):
+def build_dataset(config, ner=False, mode='training', token=False):
     root = os.path.join(config.dir, 'xac')
     if mode == 'training':
         train_dir = os.path.join(root, 'train')
         train_file = os.path.join(root, 'captions_train_raw.tsv' if not ner else 'captions_train.tsv')
         data = XACCaption(train_dir, train_file, max_length=config.max_position_embeddings, limit=config.limit,
-                          transform=train_transform, mode='training')
+                          transform=train_transform, mode='training', token=token)
         return data
 
     elif mode == 'validation':
         val_dir = os.path.join(root, 'test')
         val_file = os.path.join(root, 'captions_test_raw.tsv' if not ner else 'captions_test.tsv')
         data = XACCaption(val_dir, val_file, max_length=config.max_position_embeddings, limit=config.limit,
-                          transform=val_transform, mode='validation')
+                          transform=val_transform, mode='validation', token=token)
         return data
 
     else:

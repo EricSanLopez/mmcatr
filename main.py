@@ -41,7 +41,7 @@ def main(config, args):
 
         data_loader_train, data_loader_val, aux = build_dataloader(
             args.dataset, args.date_estimation, config, args.language, args.ner, args.synthetic_images,
-            args.synthetic_captions, args.weighted_criterion)
+            args.synthetic_captions, args.weighted_criterion, args.token)
 
         criterion = aux if args.weighted_criterion else criterion
 
@@ -88,6 +88,7 @@ def main(config, args):
                 'epoch': epoch,
             }, os.path.join('checkpoints', output_name + '.pth'))
 
+            # Validation
             if args.date_estimation:
                 validation_loss = evaluate_multitask(model, criterion, criterion_datation, data_loader_val, device)
 
@@ -111,8 +112,8 @@ def get_output_name(args):
     if args.dataset == 'synthetic':
         output_name += f'{config.experiment}_{args.synthetic_images}_{args.synthetic_captions}'
     else:
-        output_name += f'{config.experiment}_{args.dataset}' + (f'_{args.language}' if args.dataset == 'laion' else '')\
-            + (f'_ner' if args.ner else '')
+        output_name += (f'{config.experiment}_{args.dataset}' + (f'_{args.language}' if args.dataset == 'laion' else '')
+                        + (f'_ner' if args.ner else ''))
     return output_name
 
 
@@ -126,6 +127,7 @@ if __name__ == "__main__":
     parser.add_argument('-w', '--weighted_criterion', default=False, type=bool)
     parser.add_argument('-l', '--language', default=None, type=str)
     parser.add_argument('-n', '--ner', default=False, type=bool)
+    parser.add_argument('-t', '--token', default=True, type=bool)
     args = parser.parse_args()
 
     config = Config()

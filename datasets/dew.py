@@ -1,4 +1,5 @@
 import pandas as pd
+import torch
 from torch.utils.data import Dataset
 import torchvision.transforms.functional as TF
 import torchvision as tv
@@ -41,17 +42,15 @@ class RandomRotation:
 train_transform = tv.transforms.Compose([
     RandomRotation(),
     tv.transforms.Lambda(under_max),
-    tv.transforms.ColorJitter(brightness=[0.5, 1.3], contrast=[
-                              0.8, 1.5], saturation=[0.2, 1.5]),
     tv.transforms.RandomHorizontalFlip(),
     tv.transforms.ToTensor(),
-    tv.transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+    tv.transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 ])
 
 val_transform = tv.transforms.Compose([
     tv.transforms.Lambda(under_max),
     tv.transforms.ToTensor(),
-    tv.transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+    tv.transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 ])
 
 

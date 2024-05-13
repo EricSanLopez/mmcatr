@@ -43,17 +43,15 @@ class RandomRotation:
 train_transform = tv.transforms.Compose([
     RandomRotation(),
     tv.transforms.Lambda(under_max),
-    tv.transforms.ColorJitter(brightness=[0.5, 1.3], contrast=[
-                              0.8, 1.5], saturation=[0.2, 1.5]),
     tv.transforms.RandomHorizontalFlip(),
     tv.transforms.ToTensor(),
-    tv.transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+    tv.transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 ])
 
 val_transform = tv.transforms.Compose([
     tv.transforms.Lambda(under_max),
     tv.transforms.ToTensor(),
-    tv.transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+    tv.transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 ])
 
 
@@ -64,6 +62,10 @@ class LAIONCaption(Dataset):
         self.root = root
         self.transform = transform
         self.annot = ann
+        if type(lang) == list:
+            self.lang = '_'.join(lang)
+        else:
+            self.lang = lang
         self.lang = lang
         self.ner = ner
 
@@ -81,31 +83,12 @@ class LAIONCaption(Dataset):
     def __len__(self):
         return len(self.annot)
 
-    def get_weights(self, size, placeholder):
-        try:
-            weights = torch.load(os.path.join('checkpoints', f'weights_laion_{self.lang}' +
-                                              ('_ner' if self.ner else '') + '.pth'))['weights']
-        except FileNotFoundError:
-            weights = [0]*size
-            for ann in self.annot:
-                caption = ann[1]
-                tokens = self.tokenizer.encode(caption)
-                for i in tokens:
-                    weights[i] += 1
-            weights = Tensor(1 - np.array(weights) / sum(weights))
-            weights[119547: 119547 + 4] = 1
-
-            torch.save({
-                'weights': weights
-            }, os.path.join('checkpoints', f'weights_laion_{self.lang}' + ('_ner' if self.ner else '') + '.pth'))
-
-        return weights
-
     def _process(self, image_id):
         return str(image_id) + '.jpg'
 
     def __getitem__(self, idx):
-        image_id, caption = self.annot[idx]
+        image_id, caption, lang = self.annot[idx]
+        caption = f'{tkn(lang)} {caption}'
         image = Image.open(os.path.join(self.root, self._process(image_id)))
 
         if self.transform:
@@ -129,8 +112,13 @@ def build_dataset(config, lang, ner, mode='training'):
         train_dir = os.path.join(root, 'img_size')
         train_file = os.path.join(root, 'train_coincidences.csv' if not ner else 'train_ner.tsv')
         ann = pd.read_csv(train_file, sep='\t')
-        ann = ann[ann['LANGUAGE'] == lang]
-        ann = [(img, caption[:config.max_position_embeddings]) for img, caption in zip(ann['SAMPLE_ID'], ann['TEXT'])]
+        if isinstance(lang, list):
+            idx = [i for i, l in enumerate(ann['LANGUAGE']) if l in lang]
+            ann = ann.iloc[idx]
+        else:
+            ann = ann[ann['LANGUAGE'] == lang]
+        ann = [(img, caption[:config.max_position_embeddings], la) for img, caption, la in
+               zip(ann['SAMPLE_ID'], ann['TEXT'], ann['LANGUAGE'])]
         data = LAIONCaption(train_dir, ann, lang=lang, ner=ner, max_length=config.max_position_embeddings,
                             transform=train_transform)
         return data
@@ -139,8 +127,13 @@ def build_dataset(config, lang, ner, mode='training'):
         val_dir = os.path.join(root, 'crossmodal_imgs')
         val_file = os.path.join(root, 'captions.tsv')
         ann = pd.read_csv(val_file, sep='\t')
-        ann = ann[ann['lang'] == lang]
-        ann = [(img, caption[:config.max_position_embeddings]) for img, caption in zip(ann['image/key'], ann['caption'])]
+        if isinstance(lang, list):
+            idx = [i for i, l in enumerate(ann['lang']) if l in lang]
+            ann = ann.iloc[idx]
+        else:
+            ann = ann[ann['lang'] == lang]
+        ann = [(img, caption[:config.max_position_embeddings], la) for img, caption, la in
+               zip(ann['image/key'], ann['caption'], ann['lang'])]
         data = LAIONCaption(val_dir, ann, lang=lang, ner=ner, max_length=config.max_position_embeddings,
                             transform=val_transform)
         return data

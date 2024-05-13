@@ -23,7 +23,7 @@ warnings.filterwarnings("ignore")  # Ignoring bleu score unnecessary warnings.
 def finetune(config, args):
     output_name = get_output_name(args)
     with (wandb.init(project="XAC-ImageCaptioning",
-                     name=f'Finetune_from_{args.checkpoint}_to_{args.dataset} (NER={args.ner})',
+                     name=f'Finetune_{output_name}',
                      config=config)):  # Starting wandb
         device = torch.device(config.device)
         print(f'Initializing Device: {device}')
@@ -33,7 +33,7 @@ def finetune(config, args):
         np.random.seed(seed)
 
         checkpoint_path = f'checkpoints/{args.checkpoint}.pth'
-        model, criterion = caption.build_model(config, multimodal=args.datation)
+        model, criterion = caption.build_model(config, multimodal=args.date_estimation)
         criterion_datation = None
         try:
             checkpoint = torch.load(checkpoint_path, map_location='cpu')
@@ -50,19 +50,19 @@ def finetune(config, args):
 
         data_loader_train, data_loader_val, aux = build_dataloader(
             args.dataset, args.date_estimation, config, args.language, args.ner, args.synthetic_images,
-            args.synthetic_captions, args.weighted_criterion)
+            args.synthetic_captions, args.weighted_criterion, args.token)
 
         criterion = aux if args.weighted_criterion else criterion
 
         print("Start Training..")
-        global_loss, global_validation_loss = utils.ArrayStructure(multitask=args.datation), \
-            utils.ArrayStructure(multitask=args.datation)
+        global_loss, global_validation_loss = utils.ArrayStructure(multitask=args.date_estimation), \
+            utils.ArrayStructure(multitask=args.date_estimation)
 
         for epoch in range(config.start_epoch, config.epochs):
             print(f"Epoch: {epoch}")
 
             # Training
-            if args.datation:
+            if args.date_estimation:
                 epoch_loss = train_one_epoch_multitask(
                     model, criterion, criterion_datation, data_loader_train, optimizer, device, epoch,
                     config.clip_max_norm)
@@ -90,7 +90,7 @@ def finetune(config, args):
             }, os.path.join('checkpoints', output_name + '.pth'))
 
             # Validation
-            if args.datation:
+            if args.date_estimation:
                 validation_loss = evaluate_multitask(model, criterion, criterion_datation, data_loader_val, device)
 
                 global_validation_loss += validation_loss
@@ -126,9 +126,12 @@ if __name__ == "__main__":
     parser.add_argument('--epochs', default=10, type=int)
     parser.add_argument('--checkpoint', default='coco', type=str)
     parser.add_argument('--weighted_criterion', default=False, type=bool)
-    parser.add_argument('--datation', default=False, type=bool)
+    parser.add_argument('--date_estimation', default=False, type=bool)
     parser.add_argument('--ner', default=False, type=bool)
     parser.add_argument('--language', default=None, type=str)
+    parser.add_argument('-si', '--synthetic_images', default=False, type=bool)
+    parser.add_argument('-sc', '--synthetic_captions', default=False, type=bool)
+    parser.add_argument('--token', default=True, type=bool)
     args = parser.parse_args()
 
     config = Config()
