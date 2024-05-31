@@ -50,9 +50,8 @@ else:
 langs = read_json(os.path.join("/data2fast/users/esanchez", "laion", 'language-codes.json'))
 tokenizer = BertTokenizer.from_pretrained('bert-base-multilingual-cased')
 additional_tokens = ['<loc>', '<per>', '<org>', '<misc>']
-additional_tokens_dict = {'additional_tokens': additional_tokens}
 special_tokens_dict = {'additional_special_tokens': tkn(langs)}
-tokenizer.add_tokens(additional_tokens_dict)
+tokenizer.add_tokens(additional_tokens)
 tokenizer.add_special_tokens(special_tokens_dict)
 
 start_token = tokenizer.convert_tokens_to_ids(tokenizer._cls_token)
@@ -95,6 +94,7 @@ def evaluate():
 
 
 output = evaluate()
+print(output[0].tolist())
 result = tokenizer.decode(output[0].tolist(), skip_special_tokens=True)
 #result = tokenizer.decode(output[0], skip_special_tokens=True)
 print(result.capitalize())

@@ -70,8 +70,9 @@ class CocoCaption(Dataset):
         # Initialize tokenizer (adding language and named entity tokens)
         langs = read_json(os.path.join("/data2fast/users/esanchez", "laion", 'language-codes.json'))
         self.tokenizer = BertTokenizer.from_pretrained('bert-base-multilingual-cased')
-        special_tokens = ['<loc>', '<per>', '<org>', '<misc>']
-        special_tokens_dict = {'additional_special_tokens': special_tokens + tkn(langs)}
+        additional_tokens = ['<loc>', '<per>', '<org>', '<misc>']
+        special_tokens_dict = {'additional_special_tokens': tkn(langs)}
+        self.tokenizer.add_tokens(additional_tokens)
         self.tokenizer.add_special_tokens(special_tokens_dict)
         self.max_length = max_length + 1
 

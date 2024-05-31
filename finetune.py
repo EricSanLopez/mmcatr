@@ -43,7 +43,7 @@ def finetune(config, args):
         model.to(device)
 
         config.lr = 1e-5
-        config.epochs = args.epochs
+        config.epochs = 20 # args.epochs
         config.lr_drop = 8
 
         optimizer, lr_scheduler = utils.get_optimizer(model, config)

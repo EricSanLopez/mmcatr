@@ -52,9 +52,8 @@ def get_tokenizer():
     langs = read_json(os.path.join("/data2fast/users/esanchez", "laion", 'language-codes.json'))
     tokenizer = BertTokenizer.from_pretrained('bert-base-multilingual-cased')
     additional_tokens = ['<loc>', '<per>', '<org>', '<misc>']
-    additional_tokens_dict = {'additional_tokens': additional_tokens}
     special_tokens_dict = {'additional_special_tokens': tkn(langs)}
-    tokenizer.add_tokens(additional_tokens_dict)
+    tokenizer.add_tokens(additional_tokens)
     tokenizer.add_special_tokens(special_tokens_dict)
     return tokenizer
 
@@ -90,7 +89,9 @@ def get_weights(dataset, data_loaders, size, lang=None, ner=None, synthetic_capt
             for i in tokens:
                 weights[i] += 1
         weights = Tensor(1 - np.array(weights) / sum(weights))
-        weights[119547: 119547 + 4] = 1
+
+        # NER tokens at max
+        # weights[119547: 119547 + 4] = 1
 
         torch.save({
             'weights': weights

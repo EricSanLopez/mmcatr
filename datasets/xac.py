@@ -73,9 +73,8 @@ class XACCaption(Dataset):
         langs = read_json(os.path.join("/data2fast/users/esanchez", "laion", 'language-codes.json'))
         self.tokenizer = BertTokenizer.from_pretrained('bert-base-multilingual-cased')
         additional_tokens = ['<loc>', '<per>', '<org>', '<misc>']
-        additional_tokens_dict = {'additional_tokens': additional_tokens}
         special_tokens_dict = {'additional_special_tokens': tkn(langs)}
-        self.tokenizer.add_tokens(additional_tokens_dict)
+        self.tokenizer.add_tokens(additional_tokens)
         self.tokenizer.add_special_tokens(special_tokens_dict)
 
         self.max_length = max_length + 1

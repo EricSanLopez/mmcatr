@@ -8,7 +8,7 @@ class Config(object):
         self.lr = 1e-4
 
         # Epochs
-        self.epochs = 10
+        self.epochs = 25  # 10
         self.lr_drop = 20
         self.start_epoch = 0
         self.weight_decay = 1e-4
@@ -36,7 +36,7 @@ class Config(object):
         self.new_vocab_size = 119547 + 222
 
         self.enc_layers = 6
-        self.dec_layers = 6
+        self.dec_layers = 10  # 6
         self.dim_feedforward = 2048
         self.nheads = 8
         self.pre_norm = True

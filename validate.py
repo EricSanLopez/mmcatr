@@ -15,7 +15,7 @@ import tqdm
 from transformers import BertTokenizer
 
 from models import utils, caption
-from datasets import coco, synthetic, xac, laion
+from datasets.dataloader import build_dataloader
 from datasets.utils import read_json, tkn
 from configuration import Config
 from engine import train_one_epoch, evaluate
@@ -44,29 +44,20 @@ def validate(config, args):
         handler = open('validation.txt', 'w')
         handler.write("checkpoint\tvalidation_loss\n")
 
-    if args.dataset == 'coco':
-        dataset_val = coco.build_dataset(config, mode='validation')
-    elif args.dataset == 'hist_sd':
-        dataset_val = synthetic.build_dataset(
-            config, synthetic_images=True, synthetic_captions=False, mode='validation')
-    elif args.dataset == 'xac':
-        dataset_val = xac.build_dataset(config, ner=args.ner, mode='validation')
-    elif args.dataset == 'laion' or args.dataset == 'crossmodal':
-        dataset_val = laion.build_dataset(config, ner=args.ner, mode='validation')
-    else:
-        raise NotImplementedError('Incorrect dataset from coco, hist_sd or xac')
+    data_loader_train, data_loader_val, criterion = build_dataloader(
+        args.dataset, False, config, args.language, args.ner, False,
+        False, True, False)
 
     langs = read_json(os.path.join("/data2fast/users/esanchez", "laion", 'language-codes.json'))
     tokenizer = BertTokenizer.from_pretrained('bert-base-multilingual-cased')
     additional_tokens = ['<loc>', '<per>', '<org>', '<misc>']
-    additional_tokens_dict = {'additional_tokens': additional_tokens}
     special_tokens_dict = {'additional_special_tokens': tkn(langs)}
-    tokenizer.add_tokens(additional_tokens_dict)
+    tokenizer.add_tokens(additional_tokens)
     tokenizer.add_special_tokens(special_tokens_dict)
 
     for experiment in checkpoints:
-        model, criterion = caption.build_model(config)
-        checkpoint_path = f'checkpoints/checkpoint_from_{experiment}.pth'
+        model, _ = caption.build_model(config)
+        checkpoint_path = f'checkpoints/{experiment}.pth'
         try:
             checkpoint = torch.load(checkpoint_path, map_location='cpu')
         except:
@@ -74,13 +65,6 @@ def validate(config, args):
         model.load_state_dict(checkpoint['model'])
         model.to(device)
         model.eval()
-
-        print(f"Valid: {len(dataset_val)}")
-
-        sampler_val = torch.utils.data.SequentialSampler(dataset_val)
-
-        data_loader_val = DataLoader(dataset_val, args.batch_size if args.batch_size is not None else config.batch_size,
-                                     sampler=sampler_val, drop_last=False, num_workers=config.num_workers)
 
         if args.loss:
             print(f"Start Validation for {experiment}")
@@ -147,12 +131,17 @@ def predict(model, data_loader, tokenizer, config, device='cuda'):
                     predicted_id = predicted_id[finished_mask]
 
                     if not any(finished_mask):
+                        # print(f'########################### {i} #################################')
                         break
 
                 captions[:, i + 1] = predicted_id
                 captions_masks[:, i + 1] = False
 
+                # print(captions[0])
+
             else:
+                # print('########################### 128 #################################')
+                print(tokenizer.decode(captions[0].tolist(), skip_special_tokens=True).capitalize())
                 preds.extend(captions)
                 targets.extend(caps)
 
