@@ -103,18 +103,19 @@ class XACCaption(Dataset):
         return 'captioning', image.tensors.squeeze(0), image.mask.squeeze(0), caption, cap_mask
 
 
-def build_dataset(config, ner=False, mode='training', token=False):
+def build_dataset(config, ner=False, mode='training', token=False, data=None):
     root = os.path.join(config.dir, 'xac')
     if mode == 'training':
-        train_dir = os.path.join(root, 'train')
-        train_file = os.path.join(root, 'captions_train_raw.tsv' if not ner else 'captions_train.tsv')
+        train_dir = os.path.join(root, 'images')
+        train_file = os.path.join(root, 'captions_train.tsv' if not ner else 'captions_train_ner.tsv')
         data = XACCaption(train_dir, train_file, max_length=config.max_position_embeddings, limit=config.limit,
                           transform=train_transform, mode='training', token=token)
         return data
 
     elif mode == 'validation':
-        val_dir = os.path.join(root, 'test')
-        val_file = os.path.join(root, 'captions_test_raw.tsv' if not ner else 'captions_test.tsv')
+        val_dir = os.path.join(root, 'images')
+        val_file = os.path.join(root, data if data is not None else
+                                ('captions_test.tsv' if not ner else 'captions_test_ner.tsv'))
         data = XACCaption(val_dir, val_file, max_length=config.max_position_embeddings, limit=config.limit,
                           transform=val_transform, mode='validation', token=token)
         return data

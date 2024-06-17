@@ -126,7 +126,6 @@ class Transformer(nn.Module):
         hs = self.decoder(tgt, memory, memory_key_padding_mask=mask, tgt_key_padding_mask=tgt_mask,
                           pos=pos_embed, query_pos=query_embed,
                           tgt_mask=generate_square_subsequent_mask(len(tgt)).to(tgt.device))
-
         return hs
 
 

@@ -67,12 +67,12 @@ def validate(config, args):
     for experiment in checkpoints:
 
         ann = generate_annoy(config, experiment)
-        checkpoint_path = f'checkpoints/{experiment}.pkl'  # .pth'
+        checkpoint_path = f'/data2fast/users/esanchez/checkpoints/{experiment}.pth'  # .pth'
         try:
-            model = torch.load(checkpoint_path, map_location='cpu')
+            checkpoint = torch.load(checkpoint_path, map_location='cpu')
         except:
             raise NotImplementedError('Incorrect checkpoint path')
-        # model.load_state_dict(checkpoint['model'])
+        model.load_state_dict(checkpoint['model'])
 
         model.to(device)
         model.eval()
@@ -105,8 +105,8 @@ def validate(config, args):
 def evaluate_datation(model, data, criterion, ann, device="cuda"):
     tasks, images, masks, targets = data
     samples = utils.NestedTensor(images, masks).to(device)
-    # outputs = model(tasks[0], samples)
-    outputs = model(images.to(device))
+    outputs = model(tasks[0], samples)
+    # outputs = model(images.to(device))
 
     dif = list()
     for i, (output, target) in enumerate(zip(outputs, targets)):
@@ -126,7 +126,7 @@ def evaluate_datation(model, data, criterion, ann, device="cuda"):
 def generate_annoy(config, checkpoint_path='multimodal_experiment_False_False'):
     model, criterion = caption.build_model(config, multimodal=True)
     try:
-        checkpoint = torch.load(f"checkpoints/{checkpoint_path}.pkl", map_location='cpu')
+        checkpoint = torch.load(f"/data2fast/users/esanchez/checkpoints/{checkpoint_path}.pth", map_location='cpu')
     except:
         raise NotImplementedError('Incorrect checkpoint from coco, hist_sd or xac')
     model.load_state_dict(checkpoint['model'])
@@ -139,7 +139,7 @@ def generate_annoy(config, checkpoint_path='multimodal_experiment_False_False'):
         dataset_train, 256, sampler=sampler_train_dew, num_workers=config.num_workers, drop_last=False)
 
     ann = annoy.Annoyer(
-        model, data_loader_train_dew, emb_size=128, out_dir=os.path.join("annoy_index", checkpoint_path)
+        model, data_loader_train_dew, emb_size=256, out_dir=os.path.join("annoy_index", checkpoint_path)
     )
 
     try:

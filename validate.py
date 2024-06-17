@@ -44,9 +44,12 @@ def validate(config, args):
         handler = open('validation.txt', 'w')
         handler.write("checkpoint\tvalidation_loss\n")
 
+    if args.batch_size is not None:
+        config.batch_size = args.batch_size
+
     data_loader_train, data_loader_val, criterion = build_dataloader(
-        args.dataset, False, config, args.language, args.ner, False,
-        False, True, False)
+        args.dataset, False, config, args.language, args.ner, synthetic_images=False,
+        weighted_criterion=True, token=False, data=args.data)
 
     langs = read_json(os.path.join("/data2fast/users/esanchez", "laion", 'language-codes.json'))
     tokenizer = BertTokenizer.from_pretrained('bert-base-multilingual-cased')
@@ -56,8 +59,8 @@ def validate(config, args):
     tokenizer.add_special_tokens(special_tokens_dict)
 
     for experiment in checkpoints:
-        model, _ = caption.build_model(config)
-        checkpoint_path = f'checkpoints/{experiment}.pth'
+        model, _ = caption.build_model(config, multimodal=args.date_estimation)
+        checkpoint_path = f'/data2fast/users/esanchez/checkpoints/{experiment}.pth'
         try:
             checkpoint = torch.load(checkpoint_path, map_location='cpu')
         except:
@@ -73,7 +76,7 @@ def validate(config, args):
             print(f"Validation Loss: {validation_loss}")
 
         print(f"Start predicts..")
-        preds, targets = predict(model, data_loader_val, tokenizer, config)
+        preds, targets = predict(model, data_loader_val, tokenizer, config, multimodal=args.date_estimation)
         preds = [tokenizer.decode(pred.tolist(), skip_special_tokens=True).capitalize() for pred in preds]
         targets = [[tokenizer.decode(target.tolist(), skip_special_tokens=True).capitalize()] for target in targets]
         handler_aux = open(f'logs/examples_{experiment}.txt', 'w')
@@ -84,7 +87,9 @@ def validate(config, args):
         print("Start NLP metrics..")
         eval_df = eval_nlp_metrics(preds, targets)
         eval_df.to_csv(f'logs/nlp_metrics_{experiment}.csv', index=False)
-        print(f"NLP metrics: \n{eval_df}")
+        print("NLP metrics:")
+        print("cider_d\tbleu_4\n", f"{eval_df.values[0][0]}\t{eval_df.values[0][1]}")
+        # print(f"NLP metrics: \n{eval_df}")
 
     if args.loss:
         handler.close()
@@ -92,7 +97,7 @@ def validate(config, args):
 
 
 @torch.no_grad()
-def predict(model, data_loader, tokenizer, config, device='cuda'):
+def predict(model, data_loader, tokenizer, config, device='cuda', multimodal=False):
     preds = list()
     targets = list()
 
@@ -111,7 +116,10 @@ def predict(model, data_loader, tokenizer, config, device='cuda'):
             captions_masks[:, 0] = False
 
             for i in range(config.max_position_embeddings - 1):
-                predictions = model(images, captions, captions_masks)
+                if multimodal:
+                    predictions = model('captioning', images, captions, captions_masks)
+                else:
+                    predictions = model(images, captions, captions_masks)
                 predictions = predictions[:, i, :]
                 predicted_id = torch.argmax(predictions, dim=1)
 
@@ -162,11 +170,13 @@ def eval_nlp_metrics(preds, caps):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser('Validate model', add_help=False)
     parser.add_argument('--dataset', default='xac', type=str)
+    parser.add_argument('--data', default=None, type=str)
     parser.add_argument('--batch_size', default=None, type=int)
     parser.add_argument('--loss', default=False, type=bool)
     parser.add_argument('--ner', default=False, type=bool)
     parser.add_argument('--checkpoint', default=None, type=str)
     parser.add_argument('--language', default=None, type=str)
+    parser.add_argument('--date_estimation', default=False, type=bool)
     args = parser.parse_args()
 
     config = Config()

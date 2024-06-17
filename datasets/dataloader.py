@@ -58,7 +58,7 @@ def get_tokenizer():
     return tokenizer
 
 
-def get_weights(dataset, data_loaders, size, lang=None, ner=None, synthetic_captions=None):
+def get_weights(dataset, data_loaders, size, lang=None, ner=None):
     dataset.sort()
     name = f'weights'
     for ds in dataset:
@@ -67,13 +67,13 @@ def get_weights(dataset, data_loaders, size, lang=None, ner=None, synthetic_capt
                 lang = '_'.join(lang)
             name += f'_{ds}_{lang}' + ('_ner' if ner else '')
         elif ds == 'synthetic':
-            name += f'_{ds}_{synthetic_captions}'
+            name += f'_{ds}' + (f'_{lang}' if lang is not None else '')
         else:  # xac
             name += f'_{ds}' + ('_ner' if ner else '')
     name += '.pth'
 
     try:
-        weights = torch.load(os.path.join('checkpoints', name))['weights']
+        weights = torch.load(os.path.join('/data2fast/users/esanchez/checkpoints', name))['weights']
     except FileNotFoundError:
         tokenizer = get_tokenizer()
         if isinstance(data_loaders, list):
@@ -95,13 +95,13 @@ def get_weights(dataset, data_loaders, size, lang=None, ner=None, synthetic_capt
 
         torch.save({
             'weights': weights
-        }, os.path.join('checkpoints', name))
+        }, os.path.join('/data2fast/users/esanchez/checkpoints', name))
 
     return weights
 
 
-def build_dataloader(dataset, datation, config, lang=None, ner=False, synthetic_images=False, synthetic_captions=False,
-                     weighted_criterion=False, token=False):
+def build_dataloader(dataset, datation, config, lang=None, ner=False, synthetic_images=False,
+                     weighted_criterion=False, token=False, data=None):
     coco, xac = False, False
     if isinstance(lang, str) and len(lang) > 2:
         token = True
@@ -115,14 +115,12 @@ def build_dataloader(dataset, datation, config, lang=None, ner=False, synthetic_
 
     if dataset == 'synthetic':
         dataset_train = bd_synthetic(
-            config, synthetic_images=synthetic_images,
-            synthetic_captions=synthetic_captions, mode='training', token=token)
+            config, synthetic_images=synthetic_images, lang=lang, mode='training', token=token)
         dataset_val = bd_synthetic(
-            config, synthetic_images=synthetic_images,
-            synthetic_captions=synthetic_captions, mode='validation', token=token)
+            config, synthetic_images=synthetic_images, lang=lang, mode='validation', token=token)
     elif dataset == 'xac':
-        dataset_train = bd_xac(config, ner=ner, mode='training', token=token)
-        dataset_val = bd_xac(config, ner=ner, mode='validation', token=token)
+        dataset_train = bd_xac(config, ner=ner, mode='training', token=token, data=data)
+        dataset_val = bd_xac(config, ner=ner, mode='validation', token=token, data=data)
     elif dataset == 'laion':
         dataset_train = bd_laion(config, lang=lang, ner=ner, mode='training')
         dataset_val = bd_laion(config, lang=lang, ner=ner, mode='validation')
@@ -146,9 +144,9 @@ def build_dataloader(dataset, datation, config, lang=None, ner=False, synthetic_
 
     if coco:
         dataset_train_coco = bd_synthetic(
-            config, synthetic_images=False, synthetic_captions=False, mode="training", token=token)
+            config, synthetic_images=False, mode="training", token=token)
         dataset_val_coco = bd_synthetic(
-            config, synthetic_images=False, synthetic_captions=False, mode="validation", token=token)
+            config, synthetic_images=False, mode="validation", token=token)
 
         print(f"Train COCO: {len(dataset_train_coco)}")
         print(f"Valid COCO: {len(dataset_val_coco)}")
@@ -195,8 +193,7 @@ def build_dataloader(dataset, datation, config, lang=None, ner=False, synthetic_
     if weighted_criterion:
         dataset = [dataset, 'synthetic'] if coco else ([dataset, 'xac'] if xac else [dataset])
         data = data_loader_train.data_loaders if isinstance(data_loader_train, MultitaskLoader) else data_loader_train
-        weights = get_weights(dataset, data, config.new_vocab_size, lang, ner,
-                              synthetic_captions).to(config.device)
+        weights = get_weights(dataset, data, config.new_vocab_size, lang, ner).to(config.device)
         criterion = nn.CrossEntropyLoss(weight=weights, ignore_index=0)
     else:
         criterion = None

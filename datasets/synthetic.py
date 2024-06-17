@@ -111,27 +111,43 @@ class SyntheticCaption(Dataset):
         return 'captioning', image.tensors.squeeze(0), image.mask.squeeze(0), caption, cap_mask
 
 
-def build_dataset(config, synthetic_images=True, synthetic_captions=False, mode='training', token=False):
+def build_dataset(config, synthetic_images=True, lang=None, mode='training', token=False):
     root = config.dir
     image = 'synthetic_image' if synthetic_images else 'image'
-    token = token if not token else ('ca' if synthetic_captions else 'en')
+    token = token if not token else ('en' if lang is None else lang)
 
     if mode == 'training':
         train_dir = os.path.join(root, 'historic_sd/images' if synthetic_images else 'coco2017/train')
-        train_file = os.path.join(root, 'coco2017', 'captions_train_cat.tsv' if synthetic_captions else
-                                  'captions_train.tsv')
-        df = pd.read_csv(train_file, sep='\t')[[image, 'caption']]
-        df.columns = [['image', 'caption']]
+
+        if isinstance(lang, list):
+            datasets_df = [0]*len(lang)
+            for i, l in enumerate(lang):
+                train_file = os.path.join(root, 'coco2017', f'captions_train{("_" + l) if l != "en" else ""}.tsv')
+                datasets_df[i] = pd.read_csv(train_file, sep='\t')[[image, 'caption']]
+                datasets_df[i].columns = [['image', 'caption']]
+            df = pd.concat(datasets_df)
+        else:
+            train_file = os.path.join(root, 'coco2017', f'captions_train{("_" + lang) if lang is not None else ""}.tsv')
+            df = pd.read_csv(train_file, sep='\t')[[image, 'caption']]
+            df.columns = [['image', 'caption']]
         data = SyntheticCaption(train_dir, df, max_length=config.max_position_embeddings, limit=config.limit,
                                 transform=train_transform, mode='training', token=token)
         return data
 
     elif mode == 'validation':
         val_dir = os.path.join(root, 'historic_sd/images' if synthetic_images else 'coco2017/test')
-        val_file = os.path.join(root, 'coco2017', 'captions_test_cat.tsv' if synthetic_captions else
-                                'captions_test.tsv')
-        df = pd.read_csv(val_file, sep='\t')[[image, 'caption']]
-        df.columns = [['image', 'caption']]
+
+        if isinstance(lang, list):
+            datasets_df = [0]*len(lang)
+            for i, l in enumerate(lang):
+                val_file = os.path.join(root, 'coco2017', f'captions_test{("_" + l) if l != "en" else ""}.tsv')
+                datasets_df[i] = pd.read_csv(val_file, sep='\t')[[image, 'caption']]
+                datasets_df[i].columns = [['image', 'caption']]
+            df = pd.concat(datasets_df)
+        else:
+            test_file = os.path.join(root, 'coco2017', f'captions_test{("_" + lang) if lang is not None else ""}.tsv')
+            df = pd.read_csv(test_file, sep='\t')[[image, 'caption']]
+            df.columns = [['image', 'caption']]
         data = SyntheticCaption(val_dir, df, max_length=config.max_position_embeddings, limit=config.limit,
                                 transform=val_transform, mode='validation', token=token)
         return data

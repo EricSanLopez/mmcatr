@@ -39,7 +39,7 @@ class ArrayStructure:
 
 
 def save_losses(output_name, epoch_loss, validation_loss):
-    with open(os.path.join('checkpoints', output_name + '.csv'), 'w') as f:
+    with open(os.path.join('/data2fast/users/esanchez/checkpoints', output_name + '.csv'), 'w') as f:
         if epoch_loss.multitask:
             f.write(f'epoch,{",".join([f"training_{task}" for task in epoch_loss.array.keys()])},'
                     f'{",".join([f"validation_{task}" for task in validation_loss.array.keys()])}\n')

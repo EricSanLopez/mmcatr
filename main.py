@@ -36,12 +36,12 @@ def main(config, args):
         model, criterion = caption.build_model(config, multimodal=args.date_estimation)
         model.to(device)
 
-        criterion_datation = utils.get_criterion("Triplet")
+        criterion_datation = utils.get_criterion("NDCG")
         optimizer, lr_scheduler = utils.get_optimizer(model, config)
 
         data_loader_train, data_loader_val, aux = build_dataloader(
             args.dataset, args.date_estimation, config, args.language, args.ner, args.synthetic_images,
-            args.synthetic_captions, args.weighted_criterion, args.token)
+            args.weighted_criterion, args.token)
 
         criterion = aux if args.weighted_criterion else criterion
 
@@ -86,7 +86,7 @@ def main(config, args):
                 'optimizer': optimizer.state_dict(),
                 'lr_scheduler': lr_scheduler.state_dict(),
                 'epoch': epoch,
-            }, os.path.join('checkpoints', output_name + '.pth'))
+            }, os.path.join('/data2fast/users/esanchez/checkpoints', output_name + '.pth'))
 
             # Validation
             if args.date_estimation:
@@ -110,7 +110,7 @@ def main(config, args):
 def get_output_name(args):
     output_name = 'multimodal_' if args.date_estimation else ''
     if args.dataset == 'synthetic':
-        output_name += f'{config.experiment}_{args.synthetic_images}_{args.synthetic_captions}'
+        output_name += f'{config.experiment}_{args.synthetic_images}_{args.language}'
     else:
         output_name += (f'{config.experiment}_{args.dataset}' + (f'_{args.language}' if args.dataset == 'laion' else '')
                         + (f'_ner' if args.ner else ''))
@@ -121,7 +121,6 @@ if __name__ == "__main__":
     wandb.login()
     parser = argparse.ArgumentParser('Train model from zero', add_help=False)
     parser.add_argument('-si', '--synthetic_images', default=False, type=bool)
-    parser.add_argument('-sc', '--synthetic_captions', default=False, type=bool)
     parser.add_argument('-d', '--dataset', default='synthetic', type=str)
     parser.add_argument('-e', '--date_estimation', default=False, type=bool)
     parser.add_argument('-w', '--weighted_criterion', default=False, type=bool)
