@@ -1,3 +1,13 @@
+**MMCATR**: Multitasking Image Captioning with Transformers
+========
+PyTorch code for training and testing the model for Image Caption and Date Estimation using any combination of training data.
+
+Code created for my final degree's thesis: 
+
+**Adaptació del domini històric i lingüístic per tasques de descripció automàtica**
+
+Original README from the CATR repository:
+
 **CA⫶TR**: Image Captioning with Transformers
 ========
 PyTorch training code and pretrained models for **CATR** (**CA**ption **TR**ansformer).
